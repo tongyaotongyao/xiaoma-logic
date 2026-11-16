@@ -1,0 +1,37 @@
+"""Independent exhaustive check of the shipped level data."""
+
+import itertools
+import json
+import unittest
+from pathlib import Path
+
+
+class LevelDataTests(unittest.TestCase):
+    def test_all_25_levels_have_one_valid_solution(self):
+        path = Path(__file__).resolve().parents[1] / "Content" / "Levels" / "levels.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["size"], 6)
+        self.assertEqual(len(data["levels"]), 25)
+        seen = set()
+        for level in data["levels"]:
+            regions = level["regions"]
+            self.assertEqual(len(regions), 6)
+            self.assertTrue(all(len(row) == 6 for row in regions))
+            self.assertEqual(set(sum(regions, [])), set(range(6)))
+            signature = tuple(tuple(row) for row in regions)
+            self.assertNotIn(signature, seen)
+            seen.add(signature)
+            givens = {row: col for row, col in level["givens"]}
+            answers = []
+            for cols in itertools.permutations(range(6)):
+                if any(abs(cols[r] - cols[r - 1]) <= 1 for r in range(1, 6)):
+                    continue
+                if any(cols[r] != c for r, c in givens.items()):
+                    continue
+                if len({regions[r][c] for r, c in enumerate(cols)}) == 6:
+                    answers.append(cols)
+            self.assertEqual(answers, [tuple(level["solution"])], level["id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
