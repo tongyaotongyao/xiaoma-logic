@@ -1,4 +1,5 @@
 #include "XiaomaBoardActor.h"
+#include "XiaomaPalette.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -10,14 +11,6 @@ namespace
 {
 constexpr float HopDuration = 0.38f;
 constexpr float FlashDuration = 0.28f;
-const FLinearColor RegionColours[6] = {
-    FLinearColor(0.29f, 0.58f, 0.94f),
-    FLinearColor(0.82f, 0.53f, 0.34f),
-    FLinearColor(0.96f, 0.48f, 0.70f),
-    FLinearColor(0.88f, 0.36f, 0.42f),
-    FLinearColor(0.94f, 0.78f, 0.30f),
-    FLinearColor(0.53f, 0.82f, 0.69f)
-};
 const TCHAR* PonyAssetPaths[6] = {
     TEXT("/Game/Ponies/Pony_Blue.Pony_Blue"),
     TEXT("/Game/Ponies/Pony_Brown.Pony_Brown"),
@@ -54,7 +47,7 @@ void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
     }
     FallbackPonyMesh = Sphere;
     MarkMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-    MarkMaterial->SetVectorParameterValue(TEXT("Color"), FLinearColor(0.10f, 0.16f, 0.24f));
+    MarkMaterial->SetVectorParameterValue(TEXT("Color"), FLinearColor(FColor(71, 65, 59)));
 
     for (int32 Index = 0; Index < FXiaomaPuzzle::CellCount; ++Index)
     {
@@ -67,7 +60,7 @@ void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
         Tile->SetStaticMesh(RoundedTile ? RoundedTile : Cube);
         Tile->SetupAttachment(SceneRoot);
         Tile->SetRelativeLocation(Position);
-        Tile->SetRelativeScale3D(FVector(1.04f, 1.04f, 0.16f));
+        Tile->SetRelativeScale3D(FVector(1.075f, 1.075f, 0.15f));
         Tile->SetCastShadow(false);
         Tile->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
         Tile->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -77,7 +70,7 @@ void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
         Tiles.Add(Tile);
 
         UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-        Material->SetVectorParameterValue(TEXT("Color"), RegionColours[Level.Regions[Index]]);
+        Material->SetVectorParameterValue(TEXT("Color"), XiaomaPalette::Regions[Level.Regions[Index]]);
         Tile->SetMaterial(0, Material);
         TileMaterials.Add(Material);
 
@@ -133,10 +126,10 @@ void AXiaomaBoardActor::RefreshBoard(const FXiaomaLevel& Level, const TArray<uin
     for (int32 Index = 0; Index < Cells.Num(); ++Index)
     {
         const bool bGiven = Level.IsGiven(Index / 6, Index % 6);
-        FLinearColor Colour = RegionColours[Level.Regions[Index]];
+        FLinearColor Colour = XiaomaPalette::Regions[Level.Regions[Index]];
         if (bGiven)
         {
-            Colour *= 1.25f;
+            Colour = FMath::Lerp(Colour, FLinearColor::White, 0.08f);
         }
         else if (Cells[Index] == 1)
         {

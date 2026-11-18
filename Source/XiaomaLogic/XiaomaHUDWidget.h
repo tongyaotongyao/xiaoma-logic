@@ -40,10 +40,10 @@ protected:
 
 private:
     UTextBlock* AddText(UVerticalBox* Parent, const FString& Text, int32 FontSize = 20,
-        FLinearColor Colour = FLinearColor::White);
-    UButton* AddButton(UVerticalBox* Parent, const FString& Text);
+        FLinearColor Colour = FLinearColor(FColor(55, 52, 42)));
+    UButton* AddButton(UVerticalBox* Parent, const FString& Text, bool bPrimary = false);
     UVerticalBox* MakePanel(UCanvasPanel* Root, const FVector2D& Position,
-        const FVector2D& Size, bool bCenter);
+        const FVector2D& Size, const FVector2D& Anchor, const FVector2D& Alignment);
     void BuildMenu(UCanvasPanel* Root);
     void BuildLevelSelect(UCanvasPanel* Root);
     void BuildGameHUD(UCanvasPanel* Root);

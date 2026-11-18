@@ -4,7 +4,7 @@
 
 ## 启动与操作
 
-- Windows 游戏入口为 `Builds/Win64/XiaomaLogic.exe`。移动游戏时请一起复制整个 `Win64` 目录。
+- 视觉更新版入口为 `Builds/Visual/Windows/XiaomaLogic.exe`。移动游戏时请一起复制整个 `Windows` 目录。基础版仍可从 `Builds/Win64/XiaomaLogic.exe` 启动。
 - 编辑工程时用 UE 5.5.4 打开 `XiaomaLogic.uproject`，主场景为 `/Game/Maps/Main`。
 - 左键放置或移除小马，右键标记或取消标记。也可打开标记模式后用左键标记。
 - Z 撤销，R 重开，H 提示，Enter 提交，Esc 暂停。主菜单可切换音效。

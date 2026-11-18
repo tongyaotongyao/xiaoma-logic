@@ -18,6 +18,8 @@
 namespace
 {
 const FString SaveSlot = TEXT("XiaomaLogicProgress");
+const FVector TableCamera(280.f, -470.f, 1200.f);
+const FVector TableFocus(280.f, 280.f, 0.f);
 }
 
 AXiaomaGameMode::AXiaomaGameMode()
@@ -47,13 +49,11 @@ void AXiaomaGameMode::BeginPlay()
     }
 
     Board = GetWorld()->SpawnActor<AXiaomaBoardActor>(AXiaomaBoardActor::StaticClass());
-    const FVector CameraPosition(280.f, -650.f, 950.f);
-    const FVector BoardCenter(280.f, 280.f, 0.f);
-    BoardCamera = GetWorld()->SpawnActor<ACameraActor>(CameraPosition,
-        (BoardCenter - CameraPosition).Rotation());
+    BoardCamera = GetWorld()->SpawnActor<ACameraActor>(TableCamera,
+        (TableFocus - TableCamera).Rotation());
     if (BoardCamera)
     {
-        BoardCamera->GetCameraComponent()->SetFieldOfView(48.f);
+        BoardCamera->GetCameraComponent()->SetFieldOfView(55.f);
     }
     APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
     if (Controller && BoardCamera)
@@ -164,10 +164,23 @@ void AXiaomaGameMode::SaveProgress()
 void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
 {
     Screen = NewScreen;
-    if (Board)
+    const bool bMenu = NewScreen == EXiaomaScreen::Menu;
+    if (BoardCamera)
     {
-        Board->SetActorHiddenInGame(NewScreen == EXiaomaScreen::Menu
-            || NewScreen == EXiaomaScreen::LevelSelect);
+        const FVector Framing = bMenu ? FVector(235.f, 0.f, 0.f) : FVector::ZeroVector;
+        BoardCamera->SetActorLocationAndRotation(TableCamera + Framing, (TableFocus - TableCamera).Rotation());
+    }
+    if (Board && bMenu && !Levels.IsEmpty())
+    {
+        const FXiaomaLevel& Preview = Levels[0];
+        TArray<uint8> PreviewCells;
+        PreviewCells.Init(0, FXiaomaPuzzle::CellCount);
+        for (const FIntPoint& Given : Preview.Givens)
+        {
+            PreviewCells[Given.X * FXiaomaPuzzle::Size + Given.Y] = 2;
+        }
+        Board->BuildBoard(Preview);
+        Board->RefreshBoard(Preview, PreviewCells);
     }
     if (GameWidget)
     {
