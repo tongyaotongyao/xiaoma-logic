@@ -1,5 +1,13 @@
 # 小马逻辑
 
-UE 5.5 Windows PC 项目，重建 6×6 彩色区域逻辑游戏。已建立 C++ 规则和游戏系统、25 个独立验证的关卡、六色小马棋子与 3D 主关卡。当前 UE 安装缺少 C++ 构建文件，正式工程尚未编译和游玩，未达到可玩验收标准。
+《小马逻辑》是用 UE 5.5.4 重建的 Windows 益智游戏，包含 25 个固定关卡和六色 3D 小马。每行、每列、每个颜色区域各放一匹，任意两匹小马不能在八个相邻方向上接触。
 
-核心规则见 `GAMEPLAY_RULES.md`，原始资料见 `PROJECT_AUDIT.md` 与 `RESOURCE_INVENTORY.md`，环境与 MCP 状态见 `ENVIRONMENT_AUDIT.md` 和 `MCP_SETUP.md`。
+## 启动与操作
+
+- Windows 游戏入口为 `Builds/Win64/XiaomaLogic.exe`。移动游戏时请一起复制整个 `Win64` 目录。
+- 编辑工程时用 UE 5.5.4 打开 `XiaomaLogic.uproject`，主场景为 `/Game/Maps/Main`。
+- 左键放置或移除小马，右键标记或取消标记。也可打开标记模式后用左键标记。
+- Z 撤销，R 重开，H 提示，Enter 提交，Esc 暂停。主菜单可切换音效。
+- 游戏自动保存解锁进度、每关最佳星级、好感度、连胜、生命、音效设置和未完成的棋盘。
+
+核心规则见 `GAMEPLAY_RULES.md`，原始资料见 `PROJECT_AUDIT.md` 与 `RESOURCE_INVENTORY.md`。环境和 MCP 见 `ENVIRONMENT_AUDIT.md`、`MCP_SETUP.md`，实测结果见 `TEST_REPORT.md`。

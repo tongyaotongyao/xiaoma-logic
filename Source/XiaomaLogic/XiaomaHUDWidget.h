@@ -31,7 +31,7 @@ class XIAOMALOGIC_API UXiaomaHUDWidget : public UUserWidget
     GENERATED_BODY()
 
 public:
-    void SetGame(AXiaomaGameMode* InGame) { Game = InGame; }
+    void SetGame(AXiaomaGameMode* InGame);
     void Refresh();
     void SelectLevel(int32 Number);
 
@@ -61,6 +61,7 @@ private:
     UFUNCTION() void OnMarkMode();
     UFUNCTION() void OnNext();
     UFUNCTION() void OnQuit();
+    UFUNCTION() void OnSound();
 
     TWeakObjectPtr<AXiaomaGameMode> Game;
 };

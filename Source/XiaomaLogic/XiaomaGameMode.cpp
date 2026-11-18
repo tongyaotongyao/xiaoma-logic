@@ -4,9 +4,16 @@
 #include "XiaomaHUDWidget.h"
 #include "XiaomaPlayerController.h"
 #include "XiaomaSaveGame.h"
+#include "Audio.h"
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
+#include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Sound/SoundWaveProcedural.h"
+#include "TimerManager.h"
 
 namespace
 {
@@ -87,6 +94,57 @@ int32 AXiaomaGameMode::GetLevelStars(int32 LevelNumber) const
 }
 int32 AXiaomaGameMode::GetCurrentStars() const { return GetLevelStars(GetLevelNumber()); }
 
+bool AXiaomaGameMode::IsSoundEnabled() const
+{
+    return Progress && Progress->bSoundEnabled;
+}
+
+void AXiaomaGameMode::ToggleSound()
+{
+    if (Progress)
+    {
+        Progress->bSoundEnabled = !Progress->bSoundEnabled;
+        SaveProgress();
+        if (GameWidget)
+        {
+            GameWidget->Refresh();
+        }
+    }
+}
+
+void AXiaomaGameMode::PlayFeedback(const TCHAR* Name)
+{
+    if (!IsSoundEnabled())
+    {
+        return;
+    }
+
+    const FString Path = FPaths::ProjectContentDir() / TEXT("ImportSource/Audio")
+        / (FString(Name) + TEXT(".wav"));
+    TArray<uint8> File;
+    FWaveModInfo Info;
+    if (!FFileHelper::LoadFileToArray(File, *Path) || !Info.ReadWaveInfo(File.GetData(), File.Num())
+        || *Info.pFormatTag != 1 || *Info.pBitsPerSample != 16 || *Info.pChannels != 1
+        || *Info.pSamplesPerSec == 0 || Info.SampleDataSize == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Could not read feedback WAV: %s"), *Path);
+        return;
+    }
+
+    USoundWaveProcedural* Sound = NewObject<USoundWaveProcedural>(this);
+    Sound->SetSampleRate(*Info.pSamplesPerSec);
+    Sound->NumChannels = 1;
+    const float Duration = static_cast<float>(Info.SampleDataSize) / (2.f * *Info.pSamplesPerSec);
+    Sound->Duration = Duration;
+    Sound->QueueAudio(Info.SampleDataStart, Info.SampleDataSize);
+    if (UAudioComponent* Audio = UGameplayStatics::SpawnSound2D(this, Sound))
+    {
+        FTimerHandle StopTimer;
+        GetWorldTimerManager().SetTimer(StopTimer,
+            FTimerDelegate::CreateUObject(Audio, &UAudioComponent::Stop), Duration + 0.10f, false);
+    }
+}
+
 void AXiaomaGameMode::SaveProgress()
 {
     if (Progress)
@@ -130,6 +188,7 @@ void AXiaomaGameMode::ResumeGame()
 {
     if (Screen == EXiaomaScreen::Paused)
     {
+        BoardInputReadyAt = FPlatformTime::Seconds() + 0.25;
         SetScreen(EXiaomaScreen::Playing);
     }
 }
@@ -166,6 +225,7 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
         Board->BuildBoard(Levels[CurrentLevelIndex]);
     }
     StatusMessage = TEXT("每行、每列、每个颜色区域各放一匹小马");
+    BoardInputReadyAt = FPlatformTime::Seconds() + 0.25;
     SetScreen(EXiaomaScreen::Playing);
     RefreshBoardAndUI();
     SaveProgress();
@@ -199,6 +259,7 @@ void AXiaomaGameMode::LoseLife()
         return;
     }
     ++WrongAttempts;
+    PlayFeedback(TEXT("Error"));
     Progress->Lives = FMath::Max(0, Progress->Lives - 1);
     if (Progress->Lives == 0)
     {
@@ -216,7 +277,8 @@ void AXiaomaGameMode::LoseLife()
 
 void AXiaomaGameMode::ActivateCell(int32 Index, bool bForceMark)
 {
-    if (Screen != EXiaomaScreen::Playing || !Cells.IsValidIndex(Index))
+    if (Screen != EXiaomaScreen::Playing || !Cells.IsValidIndex(Index)
+        || FPlatformTime::Seconds() < BoardInputReadyAt)
     {
         return;
     }
@@ -225,6 +287,7 @@ void AXiaomaGameMode::ActivateCell(int32 Index, bool bForceMark)
     {
         return;
     }
+    bool bWrongCell = false;
     if (bForceMark || bMarkMode)
     {
         UndoHistory.Add(Cells);
@@ -242,12 +305,18 @@ void AXiaomaGameMode::ActivateCell(int32 Index, bool bForceMark)
         UndoHistory.Add(Cells);
         Cells[Index] = 2;
         StatusMessage = TEXT("找到一匹小马！");
+        PlayFeedback(TEXT("Place"));
     }
     else
     {
+        bWrongCell = true;
         LoseLife();
     }
     RefreshBoardAndUI();
+    if (Board)
+    {
+        Board->FlashCell(Index, bWrongCell);
+    }
     if (Screen == EXiaomaScreen::Playing)
     {
         SaveProgress();
@@ -283,6 +352,7 @@ void AXiaomaGameMode::UseHint()
         UndoHistory.Add(Cells);
         Cells[Cell.X * FXiaomaPuzzle::Size + Cell.Y] = 2;
         ++HintsUsed;
+        PlayFeedback(TEXT("Place"));
         StatusMessage = FString::Printf(TEXT("提示：第 %d 行，第 %d 列"), Cell.X + 1, Cell.Y + 1);
         RefreshBoardAndUI();
         SaveProgress();
@@ -310,10 +380,15 @@ void AXiaomaGameMode::SubmitAnswer()
             FMath::Max(Progress->UnlockedLevel, CurrentLevelIndex + 2));
         Progress->Affection += 5;
         ++Progress->WinStreak;
+        PlayFeedback(TEXT("Win"));
         Progress->BestStreak = FMath::Max(Progress->BestStreak, Progress->WinStreak);
         Progress->bHasActiveRound = false;
         StatusMessage = FString::Printf(TEXT("通关！获得 %d 颗星，好感度 +5"), Stars);
         SetScreen(EXiaomaScreen::Won);
+        if (Board)
+        {
+            Board->Celebrate();
+        }
         SaveProgress();
     }
     RefreshBoardAndUI();
@@ -332,6 +407,7 @@ void AXiaomaGameMode::RestartLevel()
     ResetBoard();
     Progress->bHasActiveRound = false;
     StatusMessage = TEXT("已重开当前关卡");
+    BoardInputReadyAt = FPlatformTime::Seconds() + 0.25;
     SetScreen(EXiaomaScreen::Playing);
     RefreshBoardAndUI();
     SaveProgress();

@@ -6,7 +6,6 @@
 #include "XiaomaBoardActor.generated.h"
 
 class UStaticMeshComponent;
-class UTextRenderComponent;
 class UMaterialInstanceDynamic;
 class UPrimitiveComponent;
 class UStaticMesh;
@@ -21,6 +20,9 @@ public:
     void BuildBoard(const FXiaomaLevel& Level);
     void RefreshBoard(const FXiaomaLevel& Level, const TArray<uint8>& Cells);
     int32 FindCell(const UPrimitiveComponent* Component) const;
+    void Celebrate();
+    void FlashCell(int32 Index, bool bError);
+    virtual void Tick(float DeltaSeconds) override;
 
 private:
     UPROPERTY()
@@ -33,11 +35,24 @@ private:
     TArray<TObjectPtr<UStaticMeshComponent>> Ponies;
 
     UPROPERTY()
-    TArray<TObjectPtr<UTextRenderComponent>> Marks;
+    TArray<TObjectPtr<UStaticMeshComponent>> MarkStrokesA;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UStaticMeshComponent>> MarkStrokesB;
 
     UPROPERTY()
     TArray<TObjectPtr<UMaterialInstanceDynamic>> TileMaterials;
 
     UPROPERTY()
+    TObjectPtr<UMaterialInstanceDynamic> MarkMaterial;
+
+    UPROPERTY()
     TObjectPtr<UStaticMesh> FallbackPonyMesh;
+
+    TArray<float> HopTime;
+    TArray<FVector> PonyRestPositions;
+    TArray<FLinearColor> TileColours;
+    int32 FlashIndex = INDEX_NONE;
+    float FlashRemaining = 0.f;
+    FLinearColor FlashColour;
 };

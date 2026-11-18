@@ -41,6 +41,8 @@ public:
     void Undo();
     void UseHint();
     void SubmitAnswer();
+    void ToggleSound();
+    bool IsSoundEnabled() const;
 
     EXiaomaScreen GetScreen() const { return Screen; }
     int32 GetLevelNumber() const { return CurrentLevelIndex + 1; }
@@ -65,6 +67,7 @@ private:
     void ResetBoard();
     bool IsCorrectCell(int32 Index) const;
     void LoseLife();
+    void PlayFeedback(const TCHAR* Name);
 
     TArray<FXiaomaLevel> Levels;
     TArray<uint8> Cells; // 0 empty, 1 marked, 2 pony
@@ -72,6 +75,7 @@ private:
     int32 CurrentLevelIndex = -1;
     int32 HintsUsed = 0;
     int32 WrongAttempts = 0;
+    double BoardInputReadyAt = 0.0;
     bool bMarkMode = false;
     EXiaomaScreen Screen = EXiaomaScreen::Menu;
     FString StatusMessage;

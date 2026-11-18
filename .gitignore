@@ -6,9 +6,12 @@ Saved/
 node_modules/
 downloads/
 Tools/mcp-runtime/
+Tools/uemcp-runtime/
 *.sln
 ue-mcp.local.yml
 Tools/AssetStaging/
 Previews/
 __pycache__/
 *.pyc
+*.log
+Builds/

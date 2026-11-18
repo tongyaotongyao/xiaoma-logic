@@ -11,6 +11,11 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Kismet/KismetSystemLibrary.h"
 
+void UXiaomaHUDWidget::SetGame(AXiaomaGameMode* InGame)
+{
+    Game = InGame;
+}
+
 void UXiaomaLevelButton::BindLevel()
 {
     OnClicked.AddDynamic(this, &UXiaomaLevelButton::OnLevelClicked);
@@ -40,8 +45,8 @@ UTextBlock* UXiaomaHUDWidget::AddText(UVerticalBox* Parent, const FString& Text,
     Label->SetFont(Font);
     Label->SetColorAndOpacity(FSlateColor(Colour));
     Label->SetAutoWrapText(true);
-    UVerticalBoxSlot* Slot = Parent->AddChildToVerticalBox(Label);
-    Slot->SetPadding(FMargin(4.f, 6.f));
+    UVerticalBoxSlot* BoxSlot = Parent->AddChildToVerticalBox(Label);
+    BoxSlot->SetPadding(FMargin(4.f, 6.f));
     return Label;
 }
 
@@ -57,8 +62,8 @@ UButton* UXiaomaHUDWidget::AddButton(UVerticalBox* Parent, const FString& Text)
     Label->SetFont(Font);
     Label->SetColorAndOpacity(FSlateColor(FLinearColor::White));
     Button->AddChild(Label);
-    UVerticalBoxSlot* Slot = Parent->AddChildToVerticalBox(Button);
-    Slot->SetPadding(FMargin(4.f, 5.f));
+    UVerticalBoxSlot* BoxSlot = Parent->AddChildToVerticalBox(Button);
+    BoxSlot->SetPadding(FMargin(4.f, 5.f));
     return Button;
 }
 
@@ -68,18 +73,18 @@ UVerticalBox* UXiaomaHUDWidget::MakePanel(UCanvasPanel* Root,
     UBorder* Border = WidgetTree->ConstructWidget<UBorder>();
     Border->SetBrushColor(FLinearColor(0.06f, 0.10f, 0.17f, 0.93f));
     Border->SetPadding(FMargin(16.f));
-    UCanvasPanelSlot* Slot = Root->AddChildToCanvas(Border);
+    UCanvasPanelSlot* CanvasSlot = Root->AddChildToCanvas(Border);
     if (bCenter)
     {
-        Slot->SetAnchors(FAnchors(0.5f, 0.5f));
-        Slot->SetAlignment(FVector2D(0.5f, 0.5f));
+        CanvasSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+        CanvasSlot->SetAlignment(FVector2D(0.5f, 0.5f));
     }
     else
     {
-        Slot->SetAnchors(FAnchors(0.f, 0.f));
+        CanvasSlot->SetAnchors(FAnchors(0.f, 0.f));
     }
-    Slot->SetPosition(Position);
-    Slot->SetSize(Size);
+    CanvasSlot->SetPosition(Position);
+    CanvasSlot->SetSize(Size);
     UVerticalBox* Panel = WidgetTree->ConstructWidget<UVerticalBox>();
     Border->AddChild(Panel);
     return Panel;
@@ -97,6 +102,8 @@ void UXiaomaHUDWidget::BuildMenu(UCanvasPanel* Root)
     }
     AddButton(Panel, TEXT("继续游戏"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPlay);
     AddButton(Panel, TEXT("选择关卡"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnLevels);
+    AddButton(Panel, Game.IsValid() && Game->IsSoundEnabled() ? TEXT("音效：开") : TEXT("音效：关"))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSound);
     AddButton(Panel, TEXT("退出游戏"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnQuit);
 }
 
@@ -137,7 +144,7 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
     AddText(Panel, FString::Printf(TEXT("第 %d / 25 关"), Game->GetLevelNumber()), 28,
         FLinearColor(1.f, 0.82f, 0.47f));
     AddText(Panel, FString::Printf(TEXT("生命  %d / 2"), Game->GetLives()), 19);
-    AddText(Panel, FString::Printf(TEXT("本关星星  %d / 3"), Game->GetCurrentStars()), 18);
+    AddText(Panel, FString::Printf(TEXT("本关最佳星星  %d / 3"), Game->GetCurrentStars()), 18);
     AddText(Panel, FString::Printf(TEXT("好感度  %d"), Game->GetAffection()), 18);
     AddText(Panel, FString::Printf(TEXT("连胜  %d  ·  最佳 %d"),
         Game->GetWinStreak(), Game->GetBestStreak()), 18);
@@ -149,6 +156,30 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
     AddButton(Panel, TEXT("提示  H"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnHint);
     AddButton(Panel, TEXT("提交答案  Enter"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSubmit);
     AddButton(Panel, TEXT("暂停  Esc"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPause);
+
+    UVerticalBox* Legend = MakePanel(Root, FVector2D(-18.f, 18.f),
+        FVector2D(220.f, 365.f), false);
+    if (UCanvasPanelSlot* LegendSlot = Cast<UCanvasPanelSlot>(Legend->GetParent()->Slot))
+    {
+        LegendSlot->SetAnchors(FAnchors(1.f, 0.f));
+        LegendSlot->SetAlignment(FVector2D(1.f, 0.f));
+    }
+    AddText(Legend, TEXT("六色小马"), 24, FLinearColor(1.f, 0.82f, 0.47f));
+    const TCHAR* Names[6] = {
+        TEXT("蓝色"), TEXT("棕色"), TEXT("粉色"),
+        TEXT("红色"), TEXT("黄色"), TEXT("薄荷色")
+    };
+    const FLinearColor Colours[6] = {
+        FLinearColor(0.29f, 0.58f, 0.94f), FLinearColor(0.82f, 0.53f, 0.34f),
+        FLinearColor(0.96f, 0.48f, 0.70f), FLinearColor(0.88f, 0.36f, 0.42f),
+        FLinearColor(0.94f, 0.78f, 0.30f), FLinearColor(0.53f, 0.82f, 0.69f)
+    };
+    for (int32 Colour = 0; Colour < 6; ++Colour)
+    {
+        AddText(Legend, FString::Printf(TEXT("●  %s小马"), Names[Colour]), 17,
+            Colours[Colour]);
+    }
+    AddText(Legend, TEXT("每行、每列、每色各一匹；小马不能相邻。"), 15);
 }
 
 void UXiaomaHUDWidget::BuildOverlay(UCanvasPanel* Root,
@@ -213,6 +244,7 @@ void UXiaomaHUDWidget::OnHint() { if (Game.IsValid()) Game->UseHint(); }
 void UXiaomaHUDWidget::OnSubmit() { if (Game.IsValid()) Game->SubmitAnswer(); }
 void UXiaomaHUDWidget::OnMarkMode() { if (Game.IsValid()) Game->ToggleMarkMode(); }
 void UXiaomaHUDWidget::OnNext() { if (Game.IsValid()) Game->NextLevel(); }
+void UXiaomaHUDWidget::OnSound() { if (Game.IsValid()) Game->ToggleSound(); }
 void UXiaomaHUDWidget::OnQuit()
 {
     if (APlayerController* Controller = GetOwningPlayer())

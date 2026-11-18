@@ -151,10 +151,25 @@ EXiaomaBoardResult FXiaomaPuzzle::CheckBoard(const FXiaomaLevel& Level,
         OutMessage = TEXT("棋盘数据无效");
         return EXiaomaBoardResult::Invalid;
     }
+    int32 Ponies = 0;
+    for (const uint8 Cell : Cells)
+    {
+        Ponies += Cell == 2 ? 1 : 0;
+    }
+    if (Ponies < Size)
+    {
+        OutMessage = FString::Printf(TEXT("还需放置 %d 匹小马"), Size - Ponies);
+        return EXiaomaBoardResult::Incomplete;
+    }
+    if (Ponies > Size)
+    {
+        OutMessage = TEXT("棋盘上只能放置六匹小马");
+        return EXiaomaBoardResult::Invalid;
+    }
+
     int32 Rows[Size] = {};
     int32 Columns[Size] = {};
     int32 Regions[Size] = {};
-    int32 Ponies = 0;
     for (int32 Row = 0; Row < Size; ++Row)
     {
         for (int32 Column = 0; Column < Size; ++Column)
@@ -163,7 +178,6 @@ EXiaomaBoardResult FXiaomaPuzzle::CheckBoard(const FXiaomaLevel& Level,
             {
                 continue;
             }
-            ++Ponies;
             ++Rows[Row];
             ++Columns[Column];
             ++Regions[Level.RegionAt(Row, Column)];
@@ -194,11 +208,6 @@ EXiaomaBoardResult FXiaomaPuzzle::CheckBoard(const FXiaomaLevel& Level,
             OutMessage = TEXT("预设的小马不能移除");
             return EXiaomaBoardResult::Invalid;
         }
-    }
-    if (Ponies < Size)
-    {
-        OutMessage = FString::Printf(TEXT("还需放置 %d 匹小马"), Size - Ponies);
-        return EXiaomaBoardResult::Incomplete;
     }
     OutMessage = TEXT("全部规则满足！");
     return EXiaomaBoardResult::Solved;

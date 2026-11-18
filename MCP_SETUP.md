@@ -1,21 +1,23 @@
 # Unreal MCP 配置与验证
 
-## 方案选择
+## 方案
 
-本机 UE 为 5.5。Epic 官方 Unreal MCP 文档对应较新的 UE 版本；本机 UE 5.5 安装中没有该官方插件，因此不能直接使用官方方案。
+本机运行 UE 5.5.4，安装中未发现 Epic 的官方 Unreal MCP 插件。[Epic Unreal MCP](https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor)
 
-选用 `db-lyon/ue-mcp` 1.4.13，MIT 许可。其项目说明明确支持 Windows 上 UE 5.4–5.9、Node.js 20+ 和 Codex。仓库在审计时活跃，提供项目级 C++ 桥接插件。代价是需编译插件，并允许本机 MCP 服务操作打开的 UE 工程；只安装在本项目中，不装到引擎目录。安装包 SHA-256：`1003304006F9A951E49997E2296B8BDEEC7DA3C78DDB39DC2D84B0017D4E3C5F`。
+最先安装了 `db-lyon/ue-mcp` 1.4.13。引擎修复后，项目 C++ 可以编译，该桥接插件仍在 Nanite、PoseSearch 和编辑器接口上出现 UE 5.5 编译错误。插件源码保留，工程描述文件中已停用。原服务曾返回 `editorConnected=false`。[db-lyon/ue-mcp](https://github.com/db-lyon/ue-mcp)
 
-项目来源：<https://github.com/db-lyon/ue-mcp>。Epic 官方方案说明：<https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor>。
+最终使用 ATDev UEMCP 0.1.0，MIT 许可，安装自审查过的提交 `3d38a7b2067275d9d0df7f932775204958a0e5a9`。服务兼容标准 MCP stdio，依赖 Python 3.10+ 和 MCP Python SDK。它使用 UE 自带的 Python 编辑器插件，省去自定义 C++ 桥接的编译迁移。与同样使用 Python 的 `sam-david/unreal-mcp` 相比，所选方案有独立许可证文件，并明确列出 UE 5.5 兼容范围。项目仍处于测试阶段，应以本机验证结果为准。[ATDev UEMCP](https://github.com/ATDev-Inc/uemcp) · [sam-david/unreal-mcp](https://github.com/sam-david/unreal-mcp)
 
-## 当前状态
+## 实际配置
 
-- 固定版本包已安装在项目的 `Tools/mcp-runtime`，插件源码已安装在 `Plugins/UE_MCP_Bridge`。
-- `XiaomaLogic.uproject` 已启用桥接插件。Codex 用户级配置已加入 `xiaoma_ue`，项目级配置也存在；实际启动命令使用本地 Node 与固定版本包，不依赖每次运行时从 npm 下载。
-- `codex -c service_tier=fast mcp get xiaoma_ue` 确认配置可读取。本次 Codex 会话已经能调用 MCP 服务端的 `project.get_status`；返回 `mode=disconnected`、`editorConnected=false`、`pluginBuildStale=true`。这只证明服务端可访问，不表示编辑器连接成功。
-- 插件与项目编译因 UE 5.5 安装缺少 `CoreNetTypes.generated.h` 和 `UnrealEditor-Core.lib` 而阻塞。规则程序集 `UE5Rules.dll` 已经重建。
-- Codex CLI 当前需 `-c service_tier=fast` 才能读取现有全局配置；未改动原 `service_tier`。原配置副本已保存在 `Codex-system/Codex-setup/config.before-xiaoma-mcp.2026-11-16.toml`。
+- Codex 注册名称为 `xiaoma_python`，通过 stdio 启动项目内 `Tools/uemcp-runtime/Scripts/uemcp.exe`，无需启动参数或指定工作目录。
+- 环境变量为 `UEMCP_PROJECT=XiaomaLogic` 和 `UEMCP_MULTICAST_BIND=127.0.0.1`。UE 项目启用 Python 编辑器插件及远程执行，监听回环地址，组播 TTL 为 0。
+- Python 远程执行可运行编辑器脚本，协议无身份认证。本配置用于本机，不放开防火墙和局域网监听。
+- 打开本项目的编辑器后，可调用 `ue_status` 检查发现结果，随后用 `ue_project_info` 核对实际连接。关闭编辑器后服务仍可启动，但没有编辑器目标。
+- 本机 CLI 如遇 `service_tier` 配置报错，可用 `codex -c service_tier=fast mcp get xiaoma_python` 检查注册项。
 
-## 待验证能力
+## 实际验证
 
-编辑器状态、工程与关卡、工具列表、Actor 读写和清理、蓝图、UMG、导入、材质、场景灯光、构建与自动化测试。
+2026-11-18，Codex 成功调用并发现 UE 5.5.4，读取 XiaomaLogic 工程、Main 关卡、场景 Actor 和资源列表。在独立关卡创建 StaticMeshActor，将其移动到 (120, 40, 150)，读回位置与组件，然后删除 Actor、返回 Main 并删除测试关卡。另以 `ue_python` 读取和修改项目静态网格的 Nanite 设置，实际保存资产。
+
+已确认可用工具包括项目和场景读取、Actor 创建和位置修改、Actor 查询和删除、关卡创建和切换、资产查询和删除、编辑器 Python。服务还列出蓝图、材质、灯光属性、文件导入和运行视口工具，这些能力未分别完整验收。Widget Blueprint 与自动化测试没有专用工具，本项目用 C++ UMG、UnrealBuildTool 和 UE 命令行自动化完成。

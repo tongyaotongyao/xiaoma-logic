@@ -13,15 +13,33 @@ class LevelDataTests(unittest.TestCase):
         self.assertEqual(data["size"], 6)
         self.assertEqual(len(data["levels"]), 25)
         seen = set()
-        for level in data["levels"]:
+        for expected_id, level in enumerate(data["levels"], 1):
+            self.assertEqual(level["id"], expected_id)
             regions = level["regions"]
             self.assertEqual(len(regions), 6)
             self.assertTrue(all(len(row) == 6 for row in regions))
             self.assertEqual(set(sum(regions, [])), set(range(6)))
+            for colour in range(6):
+                cells = {(r, c) for r in range(6) for c in range(6)
+                         if regions[r][c] == colour}
+                reached = {next(iter(cells))}
+                frontier = list(reached)
+                while frontier:
+                    row, col = frontier.pop()
+                    for other in ((row - 1, col), (row + 1, col),
+                                  (row, col - 1), (row, col + 1)):
+                        if other in cells and other not in reached:
+                            reached.add(other)
+                            frontier.append(other)
+                self.assertEqual(reached, cells, (expected_id, colour))
             signature = tuple(tuple(row) for row in regions)
             self.assertNotIn(signature, seen)
             seen.add(signature)
             givens = {row: col for row, col in level["givens"]}
+            self.assertEqual(len(givens), len(level["givens"]))
+            self.assertTrue(all(0 <= row < 6 and 0 <= col < 6
+                                and level["solution"][row] == col
+                                for row, col in level["givens"]))
             answers = []
             for cols in itertools.permutations(range(6)):
                 if any(abs(cols[r] - cols[r - 1]) <= 1 for r in range(1, 6)):
