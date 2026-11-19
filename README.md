@@ -15,3 +15,7 @@
 ## 2026-11-19 空棋盘版本
 
 最新版入口：`Builds/EmptyStart/Windows/XiaomaLogic.exe`。全部 25 关零预设、唯一解，重开清空棋盘。旧版进行中棋盘因关卡布局变化不再恢复；保留解锁、成绩和成长数据。旧的 Visual/Win64 构建不包含此修复。
+
+## 最新均衡关卡版本
+
+入口：`Builds/Balanced/Windows/XiaomaLogic.exe`。25 关均为空开局、唯一解；每色 3～9 格、连通且排除镜像旋转重复。旧构建仍保留，其关卡数据不再作为当前版本。

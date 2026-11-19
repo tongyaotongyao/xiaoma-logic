@@ -86,6 +86,34 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
             OutError = FString::Printf(TEXT("Level %d is malformed or not unique"), Level.Id);
             return false;
         }
+        for (int32 Colour = 0; Colour < Size; ++Colour)
+        {
+            const int32 RegionSize = Level.Regions.FilterByPredicate(
+                [Colour](int32 Value) { return Value == Colour; }).Num();
+            if (RegionSize < 3 || RegionSize > 9)
+            {
+                OutError = FString::Printf(TEXT("Level %d has an unbalanced region"), Level.Id);
+                return false;
+            }
+        }
+        TArray<uint8> Answer;
+        Answer.Init(0, CellCount);
+        for (int32 Row = 0; Row < Size; ++Row)
+        {
+            const int32 Col = Level.SolutionColumns[Row];
+            if (Col < 0 || Col >= Size)
+            {
+                OutError = TEXT("Invalid solution column");
+                return false;
+            }
+            Answer[Row * Size + Col] = 2;
+        }
+        FString AnswerMessage;
+        if (CheckBoard(Level, Answer, AnswerMessage) != EXiaomaBoardResult::Solved)
+        {
+            OutError = FString::Printf(TEXT("Level %d has an incorrect stored solution"), Level.Id);
+            return false;
+        }
         OutLevels.Add(MoveTemp(Level));
     }
     return true;

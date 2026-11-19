@@ -22,6 +22,8 @@ class LevelDataTests(unittest.TestCase):
             for colour in range(6):
                 cells = {(r, c) for r in range(6) for c in range(6)
                          if regions[r][c] == colour}
+                self.assertGreaterEqual(len(cells), 3, (expected_id, colour))
+                self.assertLessEqual(len(cells), 9, (expected_id, colour))
                 reached = {next(iter(cells))}
                 frontier = list(reached)
                 while frontier:
@@ -32,7 +34,14 @@ class LevelDataTests(unittest.TestCase):
                             reached.add(other)
                             frontier.append(other)
                 self.assertEqual(reached, cells, (expected_id, colour))
-            signature = tuple(tuple(row) for row in regions)
+            variants = []
+            grid = regions
+            for _ in range(4):
+                for rows in (grid, [list(reversed(row)) for row in grid]):
+                    labels = {}
+                    variants.append(tuple(labels.setdefault(v, len(labels)) for row in rows for v in row))
+                grid = [list(row) for row in zip(*grid[::-1])]
+            signature = min(variants)
             self.assertNotIn(signature, seen)
             seen.add(signature)
             self.assertEqual(level["givens"], [], expected_id)
