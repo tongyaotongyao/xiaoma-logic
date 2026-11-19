@@ -11,3 +11,7 @@
 - 游戏自动保存解锁进度、每关最佳星级、好感度、连胜、生命、音效设置和未完成的棋盘。
 
 核心规则见 `GAMEPLAY_RULES.md`，原始资料见 `PROJECT_AUDIT.md` 与 `RESOURCE_INVENTORY.md`。环境和 MCP 见 `ENVIRONMENT_AUDIT.md`、`MCP_SETUP.md`，实测结果见 `TEST_REPORT.md`。
+
+## 2026-11-19 空棋盘版本
+
+最新版入口：`Builds/EmptyStart/Windows/XiaomaLogic.exe`。全部 25 关零预设、唯一解，重开清空棋盘。旧版进行中棋盘因关卡布局变化不再恢复；保留解锁、成绩和成长数据。旧的 Visual/Win64 构建不包含此修复。

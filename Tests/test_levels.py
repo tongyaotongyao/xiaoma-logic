@@ -35,6 +35,7 @@ class LevelDataTests(unittest.TestCase):
             signature = tuple(tuple(row) for row in regions)
             self.assertNotIn(signature, seen)
             seen.add(signature)
+            self.assertEqual(level["givens"], [], expected_id)
             givens = {row: col for row, col in level["givens"]}
             self.assertEqual(len(givens), len(level["givens"]))
             self.assertTrue(all(0 <= row < 6 and 0 <= col < 6

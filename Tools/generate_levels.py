@@ -40,6 +40,7 @@ def valid_solutions(regions: list[list[int]], givens: list[list[int]]) -> list[t
 
 
 def make_regions(solution: tuple[int, ...], rng: random.Random) -> list[list[int]]:
+    growth_bias = rng.uniform(-0.08, 0.04)
     regions = [[-1] * SIZE for _ in range(SIZE)]
     cells = [[(row, solution[row])] for row in range(SIZE)]
     for colour, group in enumerate(cells):
@@ -53,7 +54,7 @@ def make_regions(solution: tuple[int, ...], rng: random.Random) -> list[list[int
                 for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     nr, nc = row + dr, col + dc
                     if 0 <= nr < SIZE and 0 <= nc < SIZE and regions[nr][nc] == -1:
-                        frontier.append((rng.random() + len(group) * 0.16, colour, nr, nc))
+                        frontier.append((rng.random() + len(group) * growth_bias, colour, nr, nc))
         if not frontier:
             raise RuntimeError("Region growth unexpectedly stalled")
         _, colour, row, col = min(frontier)
@@ -69,20 +70,9 @@ def make_candidate(rng: random.Random) -> dict | None:
     if solution not in solutions_without_givens:
         raise AssertionError("Generator lost its seed solution")
 
-    row_order = list(range(SIZE))
-    rng.shuffle(row_order)
+    # A board must be unique with no pre-filled ponies.
     givens: list[list[int]] = []
-    for row in row_order:
-        if len(valid_solutions(regions, givens)) == 1 and givens:
-            break
-        givens.append([row, solution[row]])
-    if len(givens) > 3:
-        return None
-
-    # One clue is always visible, as in the web prototype. Keep additional
-    # clues when the region layout alone does not identify a unique solution.
-    solved = valid_solutions(regions, givens)
-    if len(solved) != 1 or solved[0] != solution:
+    if len(solutions_without_givens) != 1:
         return None
     return {
         "regions": regions,
@@ -110,13 +100,13 @@ def main() -> None:
     if len(candidates) < COUNT:
         raise RuntimeError(f"Only found {len(candidates)} valid boards")
 
-    # More visible clues first; then fewer region-compatible placements.
-    candidates.sort(key=lambda b: (-len(b["givens"]), b["solutionsBeforeGivens"]))
+    # Put boards with smaller, more constraining regions first (difficulty heuristic).
+    candidates.sort(key=lambda b: sum(len([v for row in b["regions"] for v in row if v == c]) ** 2 for c in range(SIZE)) * -1)
     sampled = [candidates[int(i * (len(candidates) - 1) / (COUNT - 1))] for i in range(COUNT)]
     levels = []
     for number, board in enumerate(sampled, 1):
         levels.append({"id": number, **board})
-    payload = {"formatVersion": 1, "size": SIZE, "colours": SIZE, "levels": levels}
+    payload = {"formatVersion": 2, "size": SIZE, "colours": SIZE, "levels": levels}
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {len(levels)} unique-solution boards to {OUTPUT}")

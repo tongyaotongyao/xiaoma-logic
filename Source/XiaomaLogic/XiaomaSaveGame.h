@@ -10,6 +10,20 @@ class XIAOMALOGIC_API UXiaomaSaveGame : public USaveGame
     GENERATED_BODY()
 
 public:
+    // Missing in older saves: defaults to zero, so old in-progress boards are discarded.
+    UPROPERTY(SaveGame)
+    int32 LevelRevision = 0;
+
+    void MigrateLevelRevision()
+    {
+        if (LevelRevision == 2) return;
+        bHasActiveRound = false;
+        ActiveCells.Reset();
+        ActiveHintsUsed = 0;
+        ActiveWrongAttempts = 0;
+        LevelRevision = 2;
+    }
+
     UPROPERTY(SaveGame)
     int32 UnlockedLevel = 1;
 

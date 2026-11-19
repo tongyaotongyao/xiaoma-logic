@@ -48,6 +48,11 @@ void AXiaomaGameMode::BeginPlay()
         Progress->StarsByLevel.SetNumZeroed(25);
     }
 
+    if (Progress)
+    {
+        Progress->MigrateLevelRevision();
+    }
+
     Board = GetWorld()->SpawnActor<AXiaomaBoardActor>(AXiaomaBoardActor::StaticClass());
     BoardCamera = GetWorld()->SpawnActor<ACameraActor>(TableCamera,
         (TableFocus - TableCamera).Rotation());
@@ -175,10 +180,6 @@ void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
         const FXiaomaLevel& Preview = Levels[0];
         TArray<uint8> PreviewCells;
         PreviewCells.Init(0, FXiaomaPuzzle::CellCount);
-        for (const FIntPoint& Given : Preview.Givens)
-        {
-            PreviewCells[Given.X * FXiaomaPuzzle::Size + Given.Y] = 2;
-        }
         Board->BuildBoard(Preview);
         Board->RefreshBoard(Preview, PreviewCells);
     }
@@ -248,13 +249,7 @@ void AXiaomaGameMode::ResetBoard()
 {
     Cells.Init(0, FXiaomaPuzzle::CellCount);
     UndoHistory.Reset();
-    if (const FXiaomaLevel* Level = GetCurrentLevel())
-    {
-        for (const FIntPoint& Given : Level->Givens)
-        {
-            Cells[Given.X * FXiaomaPuzzle::Size + Given.Y] = 2;
-        }
-    }
+
 }
 
 bool AXiaomaGameMode::IsCorrectCell(int32 Index) const

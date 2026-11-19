@@ -80,7 +80,7 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
         {
             Level.SolutionColumns.Add(static_cast<int32>(Column->AsNumber()));
         }
-        if (Level.Regions.Num() != CellCount || Level.SolutionColumns.Num() != Size
+        if (!Level.Givens.IsEmpty() || Level.Regions.Num() != CellCount || Level.SolutionColumns.Num() != Size
             || CountSolutions(Level) != 1)
         {
             OutError = FString::Printf(TEXT("Level %d is malformed or not unique"), Level.Id);
