@@ -16,12 +16,12 @@ public:
 
     void MigrateLevelRevision()
     {
-        if (LevelRevision == 3) return;
+        if (LevelRevision == 4) return;
         bHasActiveRound = false;
         ActiveCells.Reset();
         ActiveHintsUsed = 0;
         ActiveWrongAttempts = 0;
-        LevelRevision = 3;
+        LevelRevision = 4;
     }
 
     UPROPERTY(SaveGame)

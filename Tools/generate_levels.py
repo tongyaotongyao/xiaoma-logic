@@ -9,6 +9,7 @@ from __future__ import annotations
 import itertools
 import json
 import random
+from rate_levels import analyse
 from pathlib import Path
 
 SIZE = 6
@@ -109,8 +110,9 @@ def signature(regions):
 def main():
     import math
     rng = random.Random(SEED)
+    retained = json.loads(OUTPUT.read_text())['levels'][10:]
     candidates = []
-    seen = set()
+    seen = {signature(b['regions']) for b in retained}
     for restart in range(800):
         solution = rng.choice(PLACEMENTS)
         regions = make_regions(solution, rng)
@@ -125,10 +127,13 @@ def main():
                 key = signature(regions)
                 if key not in seen:
                     seen.add(key)
-                    candidates.append(dict(regions=[row[:] for row in regions], givens=[],
-                        solution=list(answers[0]), solutionsBeforeGivens=1,
-                        regionSizes=sizes[:], searchNodes=difficulty(regions)))
-                    print(f'Accepted {len(candidates)}; sizes={sizes}', flush=True)
+                    reasoning = analyse(regions)
+                    if reasoning['solved'] and reasoning['score'] <= 24:
+                        candidates.append(dict(regions=[row[:] for row in regions], givens=[],
+                            solution=list(answers[0]), solutionsBeforeGivens=1,
+                            regionSizes=sizes[:], searchNodes=difficulty(regions),
+                            logicScore=reasoning['score'], logicSteps=reasoning['steps']))
+                        print(f"Accepted {len(candidates)}; logicScore={reasoning['score']}", flush=True)
                 break
             r, c = rng.randrange(SIZE), rng.randrange(SIZE)
             old = regions[r][c]
@@ -151,11 +156,13 @@ def main():
                 regions[r][c] = old
         if len(candidates) >= 60:
             break
-    if len(candidates) < COUNT:
+    if len(candidates) < 10:
         raise RuntimeError(f'Only {len(candidates)} qualifying boards; no data written')
-    candidates.sort(key=lambda b: b['searchNodes'])
-    levels = [dict(id=i+1, **candidates[int(i*(len(candidates)-1)/(COUNT-1))]) for i in range(COUNT)]
-    payload = dict(formatVersion=3, size=SIZE, colours=SIZE, levels=levels)
+    candidates.sort(key=lambda b: (b['logicScore'], len(b['logicSteps'])))
+    levels = [dict(id=i+1, **candidates[i]) for i in range(10)] + retained
+    for level in levels[:10]:
+        level['logicOverlapSteps'] = sum(step['rule'] == 'overlap' for step in level.pop('logicSteps'))
+    payload = dict(formatVersion=4, size=SIZE, colours=SIZE, levels=levels)
     OUTPUT.write_text(json.dumps(payload, indent=2)+'\n', encoding='utf-8')
     for b in levels:
         print(f"Level {b['id']:02}: sizes={b['regionSizes']}, searchNodes={b['searchNodes']}")

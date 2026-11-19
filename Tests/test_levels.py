@@ -60,6 +60,38 @@ class LevelDataTests(unittest.TestCase):
                     answers.append(cols)
             self.assertEqual(answers, [tuple(level["solution"])], level["id"])
 
+    def test_intro_levels_have_sound_deduction_traces(self):
+        from Tools.rate_levels import analyse
+        data = json.loads((Path(__file__).resolve().parents[1] / 'Content/Levels/levels.json').read_text())
+        for level in data['levels'][:10]:
+            regions = level['regions']
+            result = analyse(regions)  # No answer passed to the analyser.
+            self.assertTrue(result['solved'], level['id'])
+            self.assertLessEqual(result['score'], 24)
+            if level['id'] <= 2:
+                self.assertLessEqual(result['score'], 10)
+            self.assertEqual(result['placements'], [(r,c) for r,c in enumerate(level['solution'])])
+            allowed = {(r,c) for r in range(6) for c in range(6)}
+            def clash(a,b):
+                return a != b and (a[0]==b[0] or a[1]==b[1]
+                    or regions[a[0]][a[1]]==regions[b[0]][b[1]]
+                    or max(abs(a[0]-b[0]),abs(a[1]-b[1]))<=1)
+            for step in result['steps']:
+                kind, number = step['group'].split()
+                number = int(number)
+                group = {(r,c) for r in range(6) for c in range(6)
+                    if (kind=='row' and r==number-1) or (kind=='column' and c==number-1)
+                    or (kind=='colour' and regions[r][c]==number)}
+                options = allowed & group
+                self.assertEqual(set(map(tuple,step['candidates'])), options)
+                if step['rule']=='single':
+                    self.assertEqual(len(options),1)
+                for cell in map(tuple, step['removed']):
+                    self.assertIn(cell,allowed)
+                    self.assertTrue(all(clash(cell,option) for option in options))
+                allowed -= set(map(tuple,step['removed']))
+            self.assertEqual(allowed,set(result['placements']))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -52,7 +52,7 @@ bool FXiaomaPuzzleTest::RunTest(const FString& Parameters)
             FXiaomaPuzzle::CheckBoard(Level, Cells, Message) == EXiaomaBoardResult::Invalid);
     }
     UXiaomaSaveGame* Save = NewObject<UXiaomaSaveGame>();
-    Save->LevelRevision = 2; // Previous empty-start release.
+    Save->LevelRevision = 3; // Previous balanced release.
     Save->UnlockedLevel = 4;
     Save->Affection = 15;
     Save->StarsByLevel = {3, 2, 3};
