@@ -14,10 +14,6 @@
 		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true
-		},
-		{
-			"Name": "UE_MCP_Bridge",
-			"Enabled": false
 		}
 	]
 }
