@@ -1,5 +1,0 @@
-[mcp_servers.ue-mcp]
-command = "C:/Program Files/nodejs/node.exe"
-args = ["D:/Agent-workspace/Codex-workspace/Projects/xiaoma-logic/Tools/mcp-runtime/node_modules/ue-mcp/dist/index.js", "D:/Agent-workspace/Codex-workspace/Projects/xiaoma-logic/XiaomaLogic.uproject"]
-cwd = "D:/Agent-workspace/Codex-workspace/Projects/xiaoma-logic"
-enabled = true
