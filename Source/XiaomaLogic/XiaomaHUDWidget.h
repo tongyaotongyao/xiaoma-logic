@@ -46,6 +46,7 @@ private:
         const FVector2D& Size, const FVector2D& Anchor, const FVector2D& Alignment);
     void BuildMenu(UCanvasPanel* Root);
     void BuildLevelSelect(UCanvasPanel* Root);
+    void BuildSettings(UCanvasPanel* Root);
     void BuildGameHUD(UCanvasPanel* Root);
     void BuildOverlay(UCanvasPanel* Root, const FString& Title, const FString& Detail);
 
@@ -58,8 +59,18 @@ private:
     UFUNCTION() void OnRestart();
     UFUNCTION() void OnHint();
     UFUNCTION() void OnSubmit();
-    UFUNCTION() void OnMarkMode();
     UFUNCTION() void OnNext();
+    UFUNCTION() void OnSettings();
+    UFUNCTION() void OnCloseSettings();
+    UFUNCTION() void OnToggleFullscreen();
+    UFUNCTION() void OnCycleSummonMode();
+    UFUNCTION() void OnCycleTabCameraMode();
+    UFUNCTION() void OnRebindInteract();
+    UFUNCTION() void OnRebindMark();
+    UFUNCTION() void OnRebindOverview();
+    UFUNCTION() void OnRebindHint();
+    UFUNCTION() void OnRebindUndo();
+    UFUNCTION() void OnResetKeys();
     UFUNCTION() void OnQuit();
     UFUNCTION() void OnSound();
 

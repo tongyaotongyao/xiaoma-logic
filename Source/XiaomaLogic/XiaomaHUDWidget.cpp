@@ -138,8 +138,7 @@ void UXiaomaHUDWidget::BuildMenu(UCanvasPanel* Root)
     }
     AddButton(Panel, TEXT("继续游戏"), true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPlay);
     AddButton(Panel, TEXT("选择关卡"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnLevels);
-    AddButton(Panel, Game.IsValid() && Game->IsSoundEnabled() ? TEXT("音效：开") : TEXT("音效：关"))
-        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSound);
+    AddButton(Panel, TEXT("设置"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSettings);
     AddButton(Panel, TEXT("退出游戏"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnQuit);
 }
 
@@ -174,29 +173,83 @@ void UXiaomaHUDWidget::BuildLevelSelect(UCanvasPanel* Root)
     AddButton(Panel, TEXT("返回主菜单"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnMenu);
 }
 
+void UXiaomaHUDWidget::BuildSettings(UCanvasPanel* Root)
+{
+    UVerticalBox* Panel = MakePanel(Root, FVector2D::ZeroVector, FVector2D(460.f, 640.f),
+        FVector2D(0.5f), FVector2D(0.5f));
+    AddText(Panel, TEXT("设置"), 32, Green);
+
+    const bool bFull = Game.IsValid() && Game->IsFullscreen();
+    AddButton(Panel, bFull ? TEXT("显示模式：全屏") : TEXT("显示模式：窗口"))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnToggleFullscreen);
+    AddButton(Panel, Game.IsValid() && Game->IsSoundEnabled() ? TEXT("音效：开") : TEXT("音效：关"))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSound);
+
+    const EXiaomaSummonMode SMode = Game.IsValid() ? Game->GetSummonMode() : EXiaomaSummonMode::HoldWheel;
+    const TCHAR* SText = SMode == EXiaomaSummonMode::HoldWheel ? TEXT("召唤方式：长按轮盘（松手确认）")
+        : (SMode == EXiaomaSummonMode::ToggleWheel ? TEXT("召唤方式：点击切换轮盘") : TEXT("召唤方式：直接放当前色"));
+    AddButton(Panel, SText)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnCycleSummonMode);
+
+    const EXiaomaTabCameraMode CMode = Game.IsValid() ? Game->GetTabCameraMode() : EXiaomaTabCameraMode::Toggle;
+    AddButton(Panel, CMode == EXiaomaTabCameraMode::Toggle ? TEXT("视角切换：按一下切换") : TEXT("视角切换：按住看全局"))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnCycleTabCameraMode);
+
+    AddText(Panel, TEXT("键位设置（点击后按键盘修改）"), 16, Gold);
+    const EXiaomaBindAction Pending = Game.IsValid() ? Game->GetPendingRebind() : EXiaomaBindAction::None;
+    auto KeyLabel = [&](const TCHAR* Label, EXiaomaBindAction Act)
+    {
+        if (Pending == Act)
+        {
+            return FString::Printf(TEXT("%s：请按新按键..."), Label);
+        }
+        const FString KeyStr = Game.IsValid() ? Game->GetKeyForAction(Act).GetDisplayName().ToString() : TEXT("-");
+        return FString::Printf(TEXT("%s：%s"), Label, *KeyStr);
+    };
+    AddButton(Panel, KeyLabel(TEXT("召唤 / 交互"), EXiaomaBindAction::Interact))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRebindInteract);
+    AddButton(Panel, KeyLabel(TEXT("排除标记"), EXiaomaBindAction::Mark))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRebindMark);
+    AddButton(Panel, KeyLabel(TEXT("全局 / 跟随视角"), EXiaomaBindAction::Overview))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRebindOverview);
+    AddButton(Panel, KeyLabel(TEXT("使用提示星"), EXiaomaBindAction::Hint))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRebindHint);
+    AddButton(Panel, KeyLabel(TEXT("撤销一步"), EXiaomaBindAction::Undo))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRebindUndo);
+
+    AddButton(Panel, TEXT("恢复默认按键"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnResetKeys);
+    AddButton(Panel, TEXT("返回"), true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnCloseSettings);
+}
+
 void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
 {
     if (!Game.IsValid())
     {
         return;
     }
-    UVerticalBox* Panel = MakePanel(Root, FVector2D(22.f, 24.f), FVector2D(234.f, 510.f),
+    UVerticalBox* Panel = MakePanel(Root, FVector2D(22.f, 24.f), FVector2D(250.f, 520.f),
         FVector2D::ZeroVector, FVector2D::ZeroVector);
     AddText(Panel, FString::Printf(TEXT("第 %02d 关"), Game->GetLevelNumber()), 28, Green);
-    AddText(Panel, FString::Printf(TEXT("生命 %d/2  ·  星星 %d/3"),
-        Game->GetLives(), Game->GetCurrentStars()), 16, Gold);
+    AddText(Panel, FString::Printf(TEXT("生命 %d/%d  ·  步数 %d/%d"),
+        Game->GetLives(), Game->GetMaxLives(), Game->GetStepCount(), Game->GetParSteps()), 16, Gold);
+    AddText(Panel, FString::Printf(TEXT("提示星 %d  ·  四叶草 %s"),
+        Game->GetHintTokens(), Game->HasClover() ? TEXT("有") : TEXT("无")), 16, Gold);
     AddText(Panel, FString::Printf(TEXT("好感 %d  ·  连胜 %d"),
-        Game->GetAffection(), Game->GetWinStreak()), 16, Muted);
-    AddButton(Panel, Game->IsMarkMode() ? TEXT("标记模式：开") : TEXT("标记模式：关"))
-        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnMarkMode);
-    AddButton(Panel, TEXT("撤销  Z"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnUndo);
+        Game->GetAffection(), Game->GetWinStreak()), 15, Muted);
+    const FString KInteract = Game->GetKeyForAction(EXiaomaBindAction::Interact).GetDisplayName().ToString();
+    const FString KMark = Game->GetKeyForAction(EXiaomaBindAction::Mark).GetDisplayName().ToString();
+    const FString KOverview = Game->GetKeyForAction(EXiaomaBindAction::Overview).GetDisplayName().ToString();
+    const FString KHint = Game->GetKeyForAction(EXiaomaBindAction::Hint).GetDisplayName().ToString();
+    const FString KUndo = Game->GetKeyForAction(EXiaomaBindAction::Undo).GetDisplayName().ToString();
+
+    AddButton(Panel, FString::Printf(TEXT("撤销  %s"), *KUndo))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnUndo);
     AddButton(Panel, TEXT("重开  R"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRestart);
-    AddButton(Panel, TEXT("提示  H"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnHint);
+    AddButton(Panel, FString::Printf(TEXT("提示星 (%d)  %s"), Game->GetHintTokens(), *KHint))
+        ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnHint);
     AddButton(Panel, TEXT("提交答案"), true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSubmit);
     AddButton(Panel, TEXT("暂停  Esc"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPause);
 
     UVerticalBox* Legend = MakePanel(Root, FVector2D(-22.f, 24.f),
-        FVector2D(222.f, 365.f), FVector2D(1.f, 0.f), FVector2D(1.f, 0.f));
+        FVector2D(234.f, 415.f), FVector2D(1.f, 0.f), FVector2D(1.f, 0.f));
     AddText(Legend, TEXT("六色小马"), 24, Green);
     const TCHAR* Names[6] = {
         TEXT("蓝色"), TEXT("棕色"), TEXT("粉色"),
@@ -207,7 +260,8 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
         AddText(Legend, FString::Printf(TEXT("●  %s"), Names[Colour]), 16,
             FMath::Lerp(XiaomaPalette::Regions[Colour], Ink, 0.45f));
     }
-    AddText(Legend, TEXT("每行、每列、每色各一匹。小马不可相邻。"), 15, Muted);
+    AddText(Legend, FString::Printf(TEXT("WASD 移动 · %s 召唤/开箱\n%s 标记 · %s 全局视角\n左键轻抚小马"),
+        *KInteract, *KMark, *KOverview), 14, Muted);
 
     UVerticalBox* Status = MakePanel(Root, FVector2D(0.f, -18.f), FVector2D(480.f, 64.f),
         FVector2D(0.5f, 1.f), FVector2D(0.5f, 1.f));
@@ -228,6 +282,7 @@ void UXiaomaHUDWidget::BuildOverlay(UCanvasPanel* Root,
     if (Game->GetScreen() == EXiaomaScreen::Paused)
     {
         AddButton(Panel, TEXT("继续"), true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnResume);
+        AddButton(Panel, TEXT("设置"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSettings);
     }
     if (Game->GetScreen() == EXiaomaScreen::Won)
     {
@@ -258,6 +313,7 @@ void UXiaomaHUDWidget::Refresh()
     {
     case EXiaomaScreen::Menu: BuildMenu(Root); break;
     case EXiaomaScreen::LevelSelect: BuildLevelSelect(Root); break;
+    case EXiaomaScreen::Settings: BuildSettings(Root); break;
     case EXiaomaScreen::Playing: BuildGameHUD(Root); break;
     case EXiaomaScreen::Paused: BuildOverlay(Root, TEXT("已暂停"), TEXT("休息一下，随时继续。")); break;
     case EXiaomaScreen::Won: BuildOverlay(Root, TEXT("通关！"), Game->GetStatusMessage()); break;
@@ -275,8 +331,18 @@ void UXiaomaHUDWidget::OnUndo() { if (Game.IsValid()) Game->Undo(); }
 void UXiaomaHUDWidget::OnRestart() { if (Game.IsValid()) Game->RestartLevel(); }
 void UXiaomaHUDWidget::OnHint() { if (Game.IsValid()) Game->UseHint(); }
 void UXiaomaHUDWidget::OnSubmit() { if (Game.IsValid()) Game->SubmitAnswer(); }
-void UXiaomaHUDWidget::OnMarkMode() { if (Game.IsValid()) Game->ToggleMarkMode(); }
 void UXiaomaHUDWidget::OnNext() { if (Game.IsValid()) Game->NextLevel(); }
+void UXiaomaHUDWidget::OnSettings() { if (Game.IsValid()) Game->ShowSettings(); }
+void UXiaomaHUDWidget::OnCloseSettings() { if (Game.IsValid()) Game->CloseSettings(); }
+void UXiaomaHUDWidget::OnToggleFullscreen() { if (Game.IsValid()) Game->ToggleFullscreen(); }
+void UXiaomaHUDWidget::OnCycleSummonMode() { if (Game.IsValid()) Game->CycleSummonMode(); }
+void UXiaomaHUDWidget::OnCycleTabCameraMode() { if (Game.IsValid()) Game->CycleTabCameraMode(); }
+void UXiaomaHUDWidget::OnRebindInteract() { if (Game.IsValid()) Game->StartRebind(EXiaomaBindAction::Interact); }
+void UXiaomaHUDWidget::OnRebindMark() { if (Game.IsValid()) Game->StartRebind(EXiaomaBindAction::Mark); }
+void UXiaomaHUDWidget::OnRebindOverview() { if (Game.IsValid()) Game->StartRebind(EXiaomaBindAction::Overview); }
+void UXiaomaHUDWidget::OnRebindHint() { if (Game.IsValid()) Game->StartRebind(EXiaomaBindAction::Hint); }
+void UXiaomaHUDWidget::OnRebindUndo() { if (Game.IsValid()) Game->StartRebind(EXiaomaBindAction::Undo); }
+void UXiaomaHUDWidget::OnResetKeys() { if (Game.IsValid()) Game->ResetDefaultKeys(); }
 void UXiaomaHUDWidget::OnSound() { if (Game.IsValid()) Game->ToggleSound(); }
 void UXiaomaHUDWidget::OnQuit()
 {

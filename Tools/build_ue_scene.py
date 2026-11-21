@@ -50,16 +50,20 @@ def mesh_actor(name, mesh, location, scale, material=None, rotation=None):
     return actor
 
 
-mesh_actor("软草地", cube, (280, 300, -70), (25, 25, 0.5), grass)
+mesh_actor("软草地", cube, (280, 300, -70), (65, 65, 0.5), grass)
 mesh_actor("棋盘浅色基座", cube, (280, 280, -29), (7.1, 7.1, 0.22), cream)
 mesh_actor("棋盘木质底座", cube, (280, 280, -49), (7.4, 7.4, 0.18), wood)
 
-for index, name in enumerate(("Blue", "Brown", "Pink", "Red", "Yellow")):
-    x = -110 + index * 195
-    mesh_actor(f"角色台座_{name}", cylinder, (x, 880, -25), (0.72, 0.72, 0.18), cream)
-    character = assets.load_asset(f"/Game/Characters/{name}/{name}")
-    assert isinstance(character, unreal.StaticMesh), name
-    mesh_actor(f"原始角色_{name}", character, (x, 880, -15), (1.25, 1.25, 1.25))
+# 上侧待命区木栅栏与浅色站台（6 匹待命小马由运行时动态管理）
+mesh_actor("待命区地台", cube, (280, 815, -36), (6.6, 1.45, 0.16), cream)
+for index in range(7):
+    post_x = -20 + index * 100
+    mesh_actor(f"待命栅栏柱_{index}", cylinder, (post_x, 735, -2), (0.10, 0.10, 0.52), wood)
+    mesh_actor(f"待命后柱_{index}", cylinder, (post_x, 895, -2), (0.10, 0.10, 0.52), wood)
+mesh_actor("待命前横栏_上", cube, (280, 735, 10), (6.2, 0.08, 0.07), wood)
+mesh_actor("待命前横栏_下", cube, (280, 735, -10), (6.2, 0.08, 0.07), wood)
+mesh_actor("待命后横栏_上", cube, (280, 895, 10), (6.2, 0.08, 0.07), wood)
+mesh_actor("待命后横栏_下", cube, (280, 895, -10), (6.2, 0.08, 0.07), wood)
 
 for index, (x, y) in enumerate(((-570, -220), (-570, 720), (1120, -220), (1120, 720),
                                  (-300, 1080), (900, 1080))):

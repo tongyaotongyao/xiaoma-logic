@@ -10,6 +10,8 @@
 namespace
 {
 constexpr float HopDuration = 0.38f;
+constexpr float TravelDuration = 0.38f;
+constexpr float RejectDuration = 0.45f;
 constexpr float FlashDuration = 0.28f;
 const TCHAR* PonyAssetPaths[6] = {
     TEXT("/Game/Ponies/Pony_Blue.Pony_Blue"),
@@ -27,6 +29,19 @@ AXiaomaBoardActor::AXiaomaBoardActor()
     PrimaryActorTick.bStartWithTickEnabled = false;
     SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     RootComponent = SceneRoot;
+}
+
+FVector AXiaomaBoardActor::GetStandbyLocation(int32 ColourIndex) const
+{
+    return FVector(30.f + ColourIndex * 100.f, 815.f, 10.f);
+}
+
+FVector AXiaomaBoardActor::GetCellWorldLocation(FIntPoint Cell) const
+{
+    const int32 Row = FMath::Clamp(Cell.X, 0, FXiaomaPuzzle::Size - 1);
+    const int32 Column = FMath::Clamp(Cell.Y, 0, FXiaomaPuzzle::Size - 1);
+    return GetActorLocation() + FVector((FXiaomaPuzzle::Size - 1 - Column) * 112.f,
+        (FXiaomaPuzzle::Size - 1 - Row) * 112.f, 0.f);
 }
 
 void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
@@ -82,7 +97,9 @@ void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
         Pony->SetRelativeLocation(Position + FVector(0.f, 0.f, Character ? 10.f : 52.f));
         Pony->SetRelativeScale3D(Character ? FVector(0.45f) : FVector(0.36f));
         Pony->SetRelativeRotation(FRotator(0.f, 135.f, 0.f));
-        Pony->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Pony->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Pony->SetCollisionResponseToAllChannels(ECR_Ignore);
+        Pony->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
         Pony->RegisterComponent();
         AddInstanceComponent(Pony);
         Pony->SetVisibility(false);
@@ -112,9 +129,36 @@ void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
             }
         }
     }
+
+    // 在棋盘上侧木栅栏后生成 6 匹待命区小马
+    for (int32 Colour = 0; Colour < 6; ++Colour)
+    {
+        UStaticMeshComponent* Standby = NewObject<UStaticMeshComponent>(this);
+        UStaticMesh* Character = LoadObject<UStaticMesh>(nullptr, PonyAssetPaths[Colour]);
+        Standby->SetStaticMesh(Character ? Character : Sphere);
+        Standby->SetupAttachment(SceneRoot);
+        Standby->SetRelativeLocation(GetStandbyLocation(Colour));
+        Standby->SetRelativeScale3D(Character ? FVector(0.48f) : FVector(0.38f));
+        Standby->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+        Standby->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Standby->SetCollisionResponseToAllChannels(ECR_Ignore);
+        Standby->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+        Standby->RegisterComponent();
+        AddInstanceComponent(Standby);
+        StandbyPonies.Add(Standby);
+    }
+
     HopTime.Init(0.f, Tiles.Num());
     PonyRestPositions.SetNum(Tiles.Num());
     TileColours.SetNum(Tiles.Num());
+    RegionAtCell = Level.Regions;
+
+    StandbyTravelTime.Init(0.f, 6);
+    StandbyStartPos.SetNum(6);
+    StandbyEndPos.SetNum(6);
+    StandbyTargetVisible.Init(true, 6);
+    StandbyRejectTime.Init(0.f, 6);
+    StandbyHopTime.Init(0.f, 6);
 }
 
 void AXiaomaBoardActor::RefreshBoard(const FXiaomaLevel& Level, const TArray<uint8>& Cells)
@@ -123,28 +167,46 @@ void AXiaomaBoardActor::RefreshBoard(const FXiaomaLevel& Level, const TArray<uin
     {
         return;
     }
+    RegionAtCell = Level.Regions;
+
+    TArray<int32> PlacedCellByRegion;
+    PlacedCellByRegion.Init(INDEX_NONE, 6);
+
     for (int32 Index = 0; Index < Cells.Num(); ++Index)
     {
+        const int32 Colour = Level.Regions[Index];
         const bool bGiven = Level.IsGiven(Index / 6, Index % 6);
-        FLinearColor Colour = XiaomaPalette::Regions[Level.Regions[Index]];
+        FLinearColor TileColor = XiaomaPalette::Regions[Colour];
         if (bGiven)
         {
-            Colour = FMath::Lerp(Colour, FLinearColor::White, 0.08f);
+            TileColor = FMath::Lerp(TileColor, FLinearColor::White, 0.08f);
         }
         else if (Cells[Index] == 1)
         {
-            Colour *= 0.65f;
+            TileColor *= 0.65f;
         }
-        TileColours[Index] = Colour;
-        TileMaterials[Index]->SetVectorParameterValue(TEXT("Color"), Colour);
-        UStaticMesh* Character = LoadObject<UStaticMesh>(nullptr,
-            PonyAssetPaths[Level.Regions[Index]]);
+        TileColours[Index] = TileColor;
+        if (Index == HighlightedCell)
+        {
+            TileColor = FMath::Lerp(TileColor, FLinearColor::White, 0.28f);
+        }
+        TileMaterials[Index]->SetVectorParameterValue(TEXT("Color"), TileColor);
+
+        const FVector BasePos = Tiles[Index]->GetRelativeLocation();
+        Tiles[Index]->SetRelativeLocation(FVector(BasePos.X, BasePos.Y, Index == HighlightedCell ? 5.f : 0.f));
+
+        UStaticMesh* Character = LoadObject<UStaticMesh>(nullptr, PonyAssetPaths[Colour]);
         Ponies[Index]->SetStaticMesh(Character ? Character : FallbackPonyMesh.Get());
-        PonyRestPositions[Index] = Tiles[Index]->GetRelativeLocation()
+        PonyRestPositions[Index] = FVector(BasePos.X, BasePos.Y, 0.f)
             + FVector(0.f, 0.f, Character ? 10.f : 52.f);
         Ponies[Index]->SetRelativeLocation(PonyRestPositions[Index]);
         Ponies[Index]->SetRelativeScale3D(Character ? FVector(0.45f) : FVector(0.36f));
+
         const bool bShowPony = Cells[Index] == 2;
+        if (bShowPony)
+        {
+            PlacedCellByRegion[Colour] = Index;
+        }
         if (bShowPony && !bGiven && !Ponies[Index]->IsVisible())
         {
             HopTime[Index] = HopDuration;
@@ -158,6 +220,116 @@ void AXiaomaBoardActor::RefreshBoard(const FXiaomaLevel& Level, const TArray<uin
         MarkStrokesA[Index]->SetVisibility(Cells[Index] == 1);
         MarkStrokesB[Index]->SetVisibility(Cells[Index] == 1);
     }
+
+    // 同步待命区 6 匹小马的站位与飞入/请回动画
+    for (int32 Colour = 0; Colour < 6 && Colour < StandbyPonies.Num(); ++Colour)
+    {
+        const bool bShouldStandby = (PlacedCellByRegion[Colour] == INDEX_NONE);
+        if (bShouldStandby != StandbyTargetVisible[Colour])
+        {
+            StandbyTargetVisible[Colour] = bShouldStandby;
+            StandbyTravelTime[Colour] = TravelDuration;
+            if (!bShouldStandby)
+            {
+                StandbyStartPos[Colour] = GetStandbyLocation(Colour);
+                StandbyEndPos[Colour] = PonyRestPositions[PlacedCellByRegion[Colour]];
+                StandbyPonies[Colour]->SetVisibility(true);
+            }
+            else
+            {
+                StandbyStartPos[Colour] = StandbyPonies[Colour]->GetRelativeLocation();
+                StandbyEndPos[Colour] = GetStandbyLocation(Colour);
+                StandbyPonies[Colour]->SetVisibility(true);
+            }
+            SetActorTickEnabled(true);
+        }
+        else if (StandbyTravelTime[Colour] <= 0.f)
+        {
+            StandbyPonies[Colour]->SetVisibility(bShouldStandby);
+            if (bShouldStandby)
+            {
+                StandbyPonies[Colour]->SetRelativeLocation(GetStandbyLocation(Colour));
+            }
+        }
+    }
+}
+
+void AXiaomaBoardActor::SetHighlightedCell(int32 Index)
+{
+    if (HighlightedCell == Index)
+    {
+        return;
+    }
+    const int32 OldIndex = HighlightedCell;
+    HighlightedCell = Index;
+
+    auto UpdateSingleTile = [this](int32 Idx)
+    {
+        if (!Tiles.IsValidIndex(Idx)) return;
+        const FVector BasePos = Tiles[Idx]->GetRelativeLocation();
+        Tiles[Idx]->SetRelativeLocation(FVector(BasePos.X, BasePos.Y, Idx == HighlightedCell ? 5.f : 0.f));
+        if (TileMaterials.IsValidIndex(Idx) && TileColours.IsValidIndex(Idx))
+        {
+            FLinearColor BaseCol = TileColours[Idx];
+            if (Idx == HighlightedCell)
+            {
+                BaseCol = FMath::Lerp(BaseCol, FLinearColor::White, 0.28f);
+            }
+            TileMaterials[Idx]->SetVectorParameterValue(TEXT("Color"), BaseCol);
+        }
+    };
+
+    UpdateSingleTile(OldIndex);
+    UpdateSingleTile(HighlightedCell);
+}
+
+void AXiaomaBoardActor::RejectStandbyPony(int32 ColourIndex)
+{
+    if (StandbyRejectTime.IsValidIndex(ColourIndex))
+    {
+        StandbyRejectTime[ColourIndex] = RejectDuration;
+        SetActorTickEnabled(true);
+    }
+}
+
+void AXiaomaBoardActor::PetPony(int32 ColourIndex)
+{
+    if (StandbyPonies.IsValidIndex(ColourIndex) && StandbyPonies[ColourIndex]->IsVisible())
+    {
+        StandbyHopTime[ColourIndex] = HopDuration;
+        SetActorTickEnabled(true);
+    }
+    for (int32 Index = 0; Index < Ponies.Num(); ++Index)
+    {
+        if (Ponies[Index]->IsVisible() && RegionAtCell.IsValidIndex(Index) && RegionAtCell[Index] == ColourIndex)
+        {
+            HopTime[Index] = HopDuration;
+            SetActorTickEnabled(true);
+        }
+    }
+}
+
+int32 AXiaomaBoardActor::FindPonyColour(const UPrimitiveComponent* Component) const
+{
+    if (!Component)
+    {
+        return INDEX_NONE;
+    }
+    for (int32 Colour = 0; Colour < StandbyPonies.Num(); ++Colour)
+    {
+        if (StandbyPonies[Colour] == Component)
+        {
+            return Colour;
+        }
+    }
+    for (int32 Index = 0; Index < Ponies.Num(); ++Index)
+    {
+        if (Ponies[Index] == Component && RegionAtCell.IsValidIndex(Index))
+        {
+            return RegionAtCell[Index];
+        }
+    }
+    return INDEX_NONE;
 }
 
 void AXiaomaBoardActor::Celebrate()
@@ -204,6 +376,51 @@ void AXiaomaBoardActor::Tick(float DeltaSeconds)
             bAnimating |= HopTime[Index] > 0.f;
         }
     }
+
+    for (int32 Colour = 0; Colour < StandbyPonies.Num(); ++Colour)
+    {
+        if (StandbyTravelTime[Colour] > 0.f)
+        {
+            StandbyTravelTime[Colour] = FMath::Max(0.f, StandbyTravelTime[Colour] - DeltaSeconds);
+            const float T = 1.f - StandbyTravelTime[Colour] / TravelDuration;
+            FVector Pos = FMath::Lerp(StandbyStartPos[Colour], StandbyEndPos[Colour], T);
+            Pos.Z += 68.f * FMath::Sin(PI * T);
+            StandbyPonies[Colour]->SetRelativeLocation(Pos);
+            if (StandbyTravelTime[Colour] <= 0.f)
+            {
+                StandbyPonies[Colour]->SetRelativeLocation(GetStandbyLocation(Colour));
+                StandbyPonies[Colour]->SetVisibility(StandbyTargetVisible[Colour]);
+            }
+            else
+            {
+                bAnimating = true;
+            }
+        }
+        if (StandbyHopTime[Colour] > 0.f)
+        {
+            StandbyHopTime[Colour] = FMath::Max(0.f, StandbyHopTime[Colour] - DeltaSeconds);
+            const float Phase = 1.f - FMath::Min(1.f, StandbyHopTime[Colour] / HopDuration);
+            StandbyPonies[Colour]->SetRelativeLocation(GetStandbyLocation(Colour)
+                + FVector(0.f, 0.f, 30.f * FMath::Sin(PI * Phase)));
+            bAnimating |= StandbyHopTime[Colour] > 0.f;
+        }
+        if (StandbyRejectTime[Colour] > 0.f)
+        {
+            StandbyRejectTime[Colour] = FMath::Max(0.f, StandbyRejectTime[Colour] - DeltaSeconds);
+            const float T = 1.f - StandbyRejectTime[Colour] / RejectDuration;
+            const float ShakeYaw = -90.f + 28.f * FMath::Sin(T * PI * 4.f);
+            StandbyPonies[Colour]->SetRelativeRotation(FRotator(0.f, ShakeYaw, 0.f));
+            if (StandbyRejectTime[Colour] <= 0.f)
+            {
+                StandbyPonies[Colour]->SetRelativeRotation(FRotator(0.f, -90.f, 0.f));
+            }
+            else
+            {
+                bAnimating = true;
+            }
+        }
+    }
+
     if (FlashRemaining > 0.f)
     {
         FlashRemaining = FMath::Max(0.f, FlashRemaining - DeltaSeconds);

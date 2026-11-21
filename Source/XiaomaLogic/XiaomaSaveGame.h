@@ -48,6 +48,29 @@ public:
     UPROPERTY(SaveGame)
     bool bSoundEnabled = true;
 
+    /** 0: 长按打开轮盘松手确认, 1: 按一下切换轮盘, 2: 直接放当前格颜色 */
+    UPROPERTY(SaveGame)
+    uint8 SummonMode = 0;
+
+    /** 0: 按一下 Tab 切换全局/跟随, 1: 按住 Tab 看全局 */
+    UPROPERTY(SaveGame)
+    uint8 TabCameraMode = 0;
+
+    UPROPERTY(SaveGame)
+    FName KeyInteract = FName("E");
+
+    UPROPERTY(SaveGame)
+    FName KeyMark = FName("F");
+
+    UPROPERTY(SaveGame)
+    FName KeyOverview = FName("Tab");
+
+    UPROPERTY(SaveGame)
+    FName KeyHint = FName("H");
+
+    UPROPERTY(SaveGame)
+    FName KeyUndo = FName("Z");
+
     UPROPERTY(SaveGame)
     bool bHasActiveRound = false;
 

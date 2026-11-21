@@ -6,6 +6,33 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
+namespace
+{
+bool ParseIntPoint(const TArray<TSharedPtr<FJsonValue>>& Pair, FIntPoint& OutPoint)
+{
+    if (Pair.Num() != 2)
+    {
+        return false;
+    }
+    const int32 Row = static_cast<int32>(Pair[0]->AsNumber());
+    const int32 Col = static_cast<int32>(Pair[1]->AsNumber());
+    if (Row < 0 || Row >= FXiaomaPuzzle::Size || Col < 0 || Col >= FXiaomaPuzzle::Size)
+    {
+        return false;
+    }
+    OutPoint = FIntPoint(Row, Col);
+    return true;
+}
+
+EXiaomaItemType ParseItemType(const FString& Name)
+{
+    if (Name.Equals(TEXT("apple"), ESearchCase::IgnoreCase)) return EXiaomaItemType::Apple;
+    if (Name.Equals(TEXT("carrot"), ESearchCase::IgnoreCase)) return EXiaomaItemType::Carrot;
+    if (Name.Equals(TEXT("clover"), ESearchCase::IgnoreCase)) return EXiaomaItemType::Clover;
+    return EXiaomaItemType::Hint;
+}
+}
+
 bool FXiaomaLevel::IsGiven(int32 Row, int32 Column) const
 {
     return Givens.Contains(FIntPoint(Row, Column));
@@ -113,6 +140,99 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
         {
             OutError = FString::Printf(TEXT("Level %d has an incorrect stored solution"), Level.Id);
             return false;
+        }
+
+        // 解析冒险模式扩展字段（未配置时按关卡序号给默认生命与起点）
+        Level.Adventure.StartLives = Level.Id <= 10 ? 3 : 2;
+        Level.Adventure.StartCell = FIntPoint(5, 0);
+        Level.Adventure.ParSteps = 22;
+        const TSharedPtr<FJsonObject>* AdventureObj = nullptr;
+        if (Object->TryGetObjectField(TEXT("adventure"), AdventureObj) && AdventureObj && (*AdventureObj).IsValid())
+        {
+            const TSharedPtr<FJsonObject>& Adv = *AdventureObj;
+            const TArray<TSharedPtr<FJsonValue>>* StartArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("start"), StartArr) && StartArr)
+            {
+                ParseIntPoint(*StartArr, Level.Adventure.StartCell);
+            }
+            int32 ParValue = 0;
+            if (Adv->TryGetNumberField(TEXT("par"), ParValue) && ParValue > 0)
+            {
+                Level.Adventure.ParSteps = ParValue;
+            }
+            int32 LivesValue = 0;
+            if (Adv->TryGetNumberField(TEXT("lives"), LivesValue) && LivesValue > 0)
+            {
+                Level.Adventure.StartLives = FMath::Clamp(LivesValue, 1, 5);
+            }
+            const TArray<TSharedPtr<FJsonValue>>* ItemsArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("items"), ItemsArr) && ItemsArr)
+            {
+                for (const TSharedPtr<FJsonValue>& ItemVal : *ItemsArr)
+                {
+                    const TSharedPtr<FJsonObject> ItemObj = ItemVal->AsObject();
+                    if (!ItemObj.IsValid()) continue;
+                    const TArray<TSharedPtr<FJsonValue>>* CellArr = nullptr;
+                    FIntPoint Cell;
+                    if (ItemObj->TryGetArrayField(TEXT("cell"), CellArr) && CellArr && ParseIntPoint(*CellArr, Cell))
+                    {
+                        FXiaomaItemDef Def;
+                        FString TypeStr;
+                        ItemObj->TryGetStringField(TEXT("type"), TypeStr);
+                        Def.Type = ParseItemType(TypeStr);
+                        Def.Cell = Cell;
+                        Level.Adventure.Items.Add(Def);
+                    }
+                }
+            }
+            const TArray<TSharedPtr<FJsonValue>>* ChestsArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("chests"), ChestsArr) && ChestsArr)
+            {
+                for (const TSharedPtr<FJsonValue>& ChestVal : *ChestsArr)
+                {
+                    const TSharedPtr<FJsonObject> ChestObj = ChestVal->AsObject();
+                    if (!ChestObj.IsValid()) continue;
+                    const TArray<TSharedPtr<FJsonValue>>* CellArr = nullptr;
+                    FIntPoint Cell;
+                    if (ChestObj->TryGetArrayField(TEXT("cell"), CellArr) && CellArr && ParseIntPoint(*CellArr, Cell))
+                    {
+                        FXiaomaChestDef Def;
+                        Def.Cell = Cell;
+                        FString RewardStr;
+                        if (ChestObj->TryGetStringField(TEXT("reward"), RewardStr))
+                        {
+                            Def.Reward = ParseItemType(RewardStr);
+                        }
+                        const TSharedPtr<FJsonObject>* PuzzleObj = nullptr;
+                        if (ChestObj->TryGetObjectField(TEXT("puzzle"), PuzzleObj) && PuzzleObj && (*PuzzleObj).IsValid())
+                        {
+                            FString RuleTarget;
+                            if ((*PuzzleObj)->TryGetStringField(TEXT("target"), RuleTarget))
+                            {
+                                if (RuleTarget.Equals(TEXT("col"), ESearchCase::IgnoreCase)
+                                    || RuleTarget.Equals(TEXT("column"), ESearchCase::IgnoreCase))
+                                {
+                                    Def.RuleType = EXiaomaChestRuleType::Column;
+                                }
+                                else if (RuleTarget.Equals(TEXT("region"), ESearchCase::IgnoreCase))
+                                {
+                                    Def.RuleType = EXiaomaChestRuleType::Region;
+                                }
+                                else
+                                {
+                                    Def.RuleType = EXiaomaChestRuleType::Row;
+                                }
+                            }
+                            int32 IndexVal = 0;
+                            if ((*PuzzleObj)->TryGetNumberField(TEXT("index"), IndexVal))
+                            {
+                                Def.RuleIndex = FMath::Clamp(IndexVal, 0, Size - 1);
+                            }
+                        }
+                        Level.Adventure.Chests.Add(Def);
+                    }
+                }
+            }
         }
         OutLevels.Add(MoveTemp(Level));
     }

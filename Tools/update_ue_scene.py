@@ -25,8 +25,12 @@ for name, rgb in palette.items():
     assert assets.save_loaded_asset(material, only_if_is_dirty=False)
 
 tile = assets.load_asset("/Game/Board/Tile")
-assert tile
-by_label["软草地"].set_actor_scale3d(unreal.Vector(34, 34, 0.5))
+cube = assets.load_asset("/Engine/BasicShapes/Cube")
+cylinder = assets.load_asset("/Engine/BasicShapes/Cylinder")
+cream = assets.load_asset("/Game/Environment/MI_Cream")
+wood = assets.load_asset("/Game/Environment/MI_Wood")
+assert tile and cube and cylinder and cream and wood
+by_label["软草地"].set_actor_scale3d(unreal.Vector(65, 65, 0.5))
 for label in ("棋盘木质底座", "棋盘浅色基座"):
     component = by_label[label].static_mesh_component
     material = component.get_material(0)
@@ -57,14 +61,36 @@ for label, pitch, yaw, intensity, colour in (
     light.light_component.set_editor_property("cast_shadows", False)
     light.light_component.set_light_color(unreal.LinearColor(*colour, 1), False)
 
-for index, name in enumerate(("Blue", "Brown", "Pink", "Red", "Yellow")):
-    x = -90 + index * 185
-    y = 726 + abs(index - 2) * 12
-    for prefix, z in (("角色台座", -25), ("原始角色", -15)):
-        actor = by_label[f"{prefix}_{name}"]
-        actor.set_actor_location(unreal.Vector(x, y, z), False, False)
-        if prefix == "原始角色":
-            actor.set_actor_scale3d(unreal.Vector(0.90, 0.90, 0.90))
+# 删除旧的 5 个上侧角色与台座
+for name in ("Blue", "Brown", "Pink", "Red", "Yellow"):
+    for prefix in ("角色台座", "原始角色"):
+        old_actor = by_label.get(f"{prefix}_{name}")
+        if old_actor:
+            actors.destroy_actor(old_actor)
+
+
+def ensure_prop(label, mesh, loc, scale, mat):
+    prop = by_label.get(label) or actors.spawn_actor_from_class(
+        unreal.StaticMeshActor, unreal.Vector(*loc), unreal.Rotator())
+    prop.set_actor_label(label)
+    prop.set_actor_location(unreal.Vector(*loc), False, False)
+    prop.set_actor_scale3d(unreal.Vector(*scale))
+    comp = prop.static_mesh_component
+    comp.set_static_mesh(mesh)
+    comp.set_material(0, mat)
+    return prop
+
+
+# 在上侧搭建木栅栏待命区（6 匹小马由运行时 AXiaomaBoardActor 管理）
+ensure_prop("待命区地台", cube, (280, 815, -36), (6.6, 1.45, 0.16), cream)
+for index in range(7):
+    post_x = -20 + index * 100
+    ensure_prop(f"待命栅栏柱_{index}", cylinder, (post_x, 735, -2), (0.10, 0.10, 0.52), wood)
+    ensure_prop(f"待命后柱_{index}", cylinder, (post_x, 895, -2), (0.10, 0.10, 0.52), wood)
+ensure_prop("待命前横栏_上", cube, (280, 735, 10), (6.2, 0.08, 0.07), wood)
+ensure_prop("待命前横栏_下", cube, (280, 735, -10), (6.2, 0.08, 0.07), wood)
+ensure_prop("待命后横栏_上", cube, (280, 895, 10), (6.2, 0.08, 0.07), wood)
+ensure_prop("待命后横栏_下", cube, (280, 895, -10), (6.2, 0.08, 0.07), wood)
 
 for index, (x, y) in enumerate(((-152, -70), (715, -42), (40, -125),
                                 (570, -138), (-155, 585), (715, 592))):
