@@ -136,7 +136,11 @@ void UXiaomaHUDWidget::BuildMenu(UCanvasPanel* Root)
         AddText(Panel, FString::Printf(TEXT("已解锁第 %d 关 · 好感度 %d"),
             Game->GetUnlockedLevel(), Game->GetAffection()), 16, Gold);
     }
-    AddButton(Panel, TEXT("继续游戏"), true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPlay);
+    // 按钮直接写出要进哪一关：既省掉玩家的猜测，也让「继续到哪」这个行为本身可核对
+    const FString PlayLabel = Game.IsValid()
+        ? FString::Printf(TEXT("继续游戏（第 %d 关）"), Game->GetContinueLevel())
+        : FString(TEXT("继续游戏"));
+    AddButton(Panel, PlayLabel, true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPlay);
     AddButton(Panel, TEXT("选择关卡"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnLevels);
     AddButton(Panel, TEXT("设置"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSettings);
     AddButton(Panel, TEXT("退出游戏"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnQuit);

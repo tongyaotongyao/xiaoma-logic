@@ -69,6 +69,7 @@ class XIAOMALOGIC_API AXiaomaGameMode : public AGameModeBase
 public:
     AXiaomaGameMode();
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     void ShowMenu();
     void ShowLevelSelect();
@@ -137,6 +138,12 @@ private:
     void SetScreen(EXiaomaScreen NewScreen);
     void RefreshBoardAndUI();
     void SaveProgress();
+    /** 把当前进行中的对局状态写进 Progress（只在 Playing 且关卡有效时生效） */
+    void CaptureActiveRound();
+    /** 从 Progress 恢复进行中的对局状态；必须在 SpawnAdventureActors 之后调用 */
+    void RestoreActiveRound(const FXiaomaLevel& Level);
+    /** 存档里的续局是否还能用：关卡、格子数、生命、布局指纹都要对得上 */
+    bool CanResumeActiveRound(const FXiaomaLevel& Level) const;
     void ResetBoard();
     void SpawnAdventureActors();
     void ClearAdventureActors();
@@ -167,6 +174,9 @@ private:
     bool bOverviewToggleState = false;
     EXiaomaBindAction PendingRebind = EXiaomaBindAction::None;
     double BoardInputReadyAt = 0.0;
+    /** 自上次落盘以来走格子改动过状态，等待节流写盘 */
+    bool bRoundDirty = false;
+    double LastRoundSaveAt = 0.0;
     EXiaomaScreen Screen = EXiaomaScreen::Menu;
     EXiaomaScreen ReturnFromSettingsScreen = EXiaomaScreen::Menu;
     FString StatusMessage;

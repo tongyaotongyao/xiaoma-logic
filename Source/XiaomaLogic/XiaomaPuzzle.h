@@ -97,6 +97,12 @@ public:
     static EXiaomaBoardResult CheckBoard(const FXiaomaLevel& Level, const TArray<uint8>& Cells, FString& OutMessage);
     static FIntPoint FindHint(const FXiaomaLevel& Level, const TArray<uint8>& Cells);
 
+    /**
+     * 冒险布局指纹：只覆盖会影响「续局状态配位」的字段（机关、宝箱谜题、道具位置）。
+     * 关卡数据一改，旧存档里的机关状态就可能错位，靠它判定是否还能续局。
+     */
+    static int32 AdventureFingerprint(const FXiaomaLevel& Level);
+
 private:
     static void SearchSolutions(const FXiaomaLevel& Level, int32 Row, int32 UsedColumns,
         int32 UsedRegions, int32 PreviousColumn, int32 Limit, int32& Found);

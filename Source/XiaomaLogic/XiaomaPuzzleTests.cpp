@@ -51,25 +51,126 @@ bool FXiaomaPuzzleTest::RunTest(const FString& Parameters)
         TestTrue(Prefix + TEXT(" seventh pony invalid"),
             FXiaomaPuzzle::CheckBoard(Level, Cells, Message) == EXiaomaBoardResult::Invalid);
     }
+    // 存档迁移：4 版及更早的进行中棋盘全部失效，长期进度保留
     UXiaomaSaveGame* Save = NewObject<UXiaomaSaveGame>();
-    Save->LevelRevision = 3; // Previous balanced release.
+    Save->LevelRevision = 4;
     Save->UnlockedLevel = 4;
     Save->Affection = 15;
     Save->StarsByLevel = {3, 2, 3};
     Save->bHasActiveRound = true;
+    Save->ActiveLevel = 3;
     Save->ActiveCells.Init(2, 36);
+    Save->ActiveStepCount = 12;
+    Save->ActiveHerdsmanCell = FIntPoint(2, 3);
+    Save->ActiveMechanismStates = {5, 1, 0, 0, 0, 0};
     Save->MigrateLevelRevision();
+    TestEqual(TEXT("Revision upgraded"), Save->LevelRevision, XiaomaSave::LevelRevision);
     TestFalse(TEXT("Old board not resumed"), Save->bHasActiveRound);
     TestTrue(TEXT("Old cells discarded"), Save->ActiveCells.IsEmpty());
+    TestTrue(TEXT("Old mechanism states discarded"), Save->ActiveMechanismStates.IsEmpty());
+    TestTrue(TEXT("Old herdsman cell discarded"), Save->ActiveHerdsmanCell.X < 0);
+    TestEqual(TEXT("Old step count discarded"), Save->ActiveStepCount, 0);
     TestEqual(TEXT("Unlocked levels preserved"), Save->UnlockedLevel, 4);
     TestEqual(TEXT("Affection preserved"), Save->Affection, 15);
     TestEqual(TEXT("Stars preserved"), Save->StarsByLevel[1], 2);
+
+    // 已经是当前版本的续局必须原样保留
     Save->bHasActiveRound = true;
     Save->ActiveCells.Init(0, 36);
     Save->ActiveCells[3] = 2;
+    Save->ActiveStepCount = 7;
     Save->MigrateLevelRevision();
     TestTrue(TEXT("New round still resumable"), Save->bHasActiveRound);
     TestEqual(TEXT("New player move preserved"), Save->ActiveCells[3], uint8(2));
+    TestEqual(TEXT("New step count preserved"), Save->ActiveStepCount, 7);
+
+    // 机关状态的扁平编解码
+    TArray<TArray<uint8>> States;
+    States.Add(TArray<uint8>()); // 障碍没有状态
+    States.Add({1, 0, 2, 1, 0}); // 符文宝箱：已开、未领、进度 2、未读碑、未挖
+    TArray<uint8> Blob;
+    FXiaomaMechanismStateCodec::Encode(States, Blob);
+    TestEqual(TEXT("Encoded size"), Blob.Num(), 1 + 1 + 5);
+
+    TArray<TArray<uint8>> Decoded;
+    TestTrue(TEXT("States decode"), FXiaomaMechanismStateCodec::Decode(Blob, Decoded));
+    TestEqual(TEXT("State count"), Decoded.Num(), 2);
+    TestEqual(TEXT("Empty state stays empty"), Decoded[0].Num(), 0);
+    TestEqual(TEXT("Chest state round-trip"), Decoded[1].Num(), 5);
+    TestEqual(TEXT("Rune progress round-trip"), Decoded[1][2], uint8(2));
+
+    // 坏数据必须整份拒绝，不能恢复出一半
+    TArray<uint8> Truncated = Blob;
+    Truncated.Pop();
+    TestFalse(TEXT("Truncated states rejected"), FXiaomaMechanismStateCodec::Decode(Truncated, Decoded));
+    TestEqual(TEXT("Rejected decode clears output"), Decoded.Num(), 0);
+
+    // 布局指纹：稳定、区分关卡、随机关变化
+    const int32 Fingerprint6 = FXiaomaPuzzle::AdventureFingerprint(Levels[5]);
+    TestEqual(TEXT("Fingerprint stable"), FXiaomaPuzzle::AdventureFingerprint(Levels[5]), Fingerprint6);
+    TestNotEqual(TEXT("Fingerprint separates levels"), FXiaomaPuzzle::AdventureFingerprint(Levels[6]), Fingerprint6);
+    FXiaomaLevel Modified = Levels[5];
+    Modified.Adventure.Obstacles.Add(FIntPoint(5, 5));
+    TestNotEqual(TEXT("Fingerprint tracks obstacles"), FXiaomaPuzzle::AdventureFingerprint(Modified), Fingerprint6);
+
+    // 续局判定：关卡、格数、生命、布局指纹任一条不对就不续
+    UXiaomaSaveGame* Round = NewObject<UXiaomaSaveGame>();
+    Round->MigrateLevelRevision();
+    const FXiaomaLevel& Level6 = Levels[5];
+    TestFalse(TEXT("Fresh save cannot resume"), Round->CanResume(Level6));
+
+    Round->bHasActiveRound = true;
+    Round->ActiveLevel = Level6.Id;
+    Round->ActiveCells.Init(0, FXiaomaPuzzle::CellCount);
+    Round->ActiveLevelFingerprint = FXiaomaPuzzle::AdventureFingerprint(Level6);
+    Round->Lives = 3;
+    TestTrue(TEXT("Matching round resumes"), Round->CanResume(Level6));
+
+    Round->ActiveLevelFingerprint = 12345;
+    TestFalse(TEXT("Stale layout cannot resume"), Round->CanResume(Level6));
+    Round->ActiveLevelFingerprint = FXiaomaPuzzle::AdventureFingerprint(Level6);
+
+    Round->ActiveCells.SetNum(35);
+    TestFalse(TEXT("Truncated board cannot resume"), Round->CanResume(Level6));
+    Round->ActiveCells.Init(0, FXiaomaPuzzle::CellCount);
+
+    Round->Lives = 0;
+    TestFalse(TEXT("Dead round cannot resume"), Round->CanResume(Level6));
+    Round->Lives = 3;
+
+    Round->ActiveLevel = Level6.Id + 1;
+    TestFalse(TEXT("Other level cannot resume"), Round->CanResume(Level6));
+    Round->ActiveLevel = Level6.Id;
+    TestTrue(TEXT("Restored round resumes again"), Round->CanResume(Level6));
+
+    // 「继续游戏」进哪一关：有续局回续局，否则回最后玩过的关，不能拿解锁进度顶替
+    UXiaomaSaveGame* Nav = NewObject<UXiaomaSaveGame>();
+    TestEqual(TEXT("Fresh save continues at level 1"), Nav->GetContinueLevel(25), 1);
+
+    // 老存档没有 LastPlayedLevel（0），只能退回解锁进度
+    Nav->UnlockedLevel = 25;
+    TestEqual(TEXT("Legacy save falls back to unlocked"), Nav->GetContinueLevel(25), 25);
+
+    // 玩到第 4 关就退出：不能跳到第 25 关
+    Nav->LastPlayedLevel = 4;
+    TestEqual(TEXT("Continue returns last played level"), Nav->GetContinueLevel(25), 4);
+
+    // 通关第 4 关后退出：落在第 5 关
+    Nav->LastPlayedLevel = 5;
+    TestEqual(TEXT("Cleared level moves continue to next"), Nav->GetContinueLevel(25), 5);
+
+    // 未解锁的关不能直接进
+    Nav->UnlockedLevel = 6;
+    Nav->LastPlayedLevel = 9;
+    TestEqual(TEXT("Continue clamps to unlocked"), Nav->GetContinueLevel(25), 6);
+    TestEqual(TEXT("Continue clamps to level count"), Nav->GetContinueLevel(5), 5);
+
+    // 有续局时以续局为准
+    Nav->UnlockedLevel = 6;
+    Nav->LastPlayedLevel = 3;
+    Nav->bHasActiveRound = true;
+    Nav->ActiveLevel = 5;
+    TestEqual(TEXT("Active round wins over last played"), Nav->GetContinueLevel(25), 5);
     return true;
 }
 

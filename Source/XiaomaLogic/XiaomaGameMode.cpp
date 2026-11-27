@@ -26,6 +26,8 @@ namespace
 const FString SaveSlot = TEXT("XiaomaLogicProgress");
 const FVector TableCamera(280.f, -470.f, 1200.f);
 const FVector TableFocus(280.f, 280.f, 0.f);
+/** 走格子触发的存盘最小间隔：玩家连续跑动时最多每两秒写一次盘 */
+constexpr double RoundSaveIntervalSeconds = 2.0;
 }
 
 AXiaomaGameMode::AXiaomaGameMode()
@@ -56,6 +58,17 @@ void AXiaomaGameMode::BeginPlay()
     if (Progress)
     {
         Progress->MigrateLevelRevision();
+        // 解锁进度被回退或存档异常时，续局关卡不能越过已经解锁的范围
+        Progress->ActiveLevel = FMath::Clamp(Progress->ActiveLevel, 1, FMath::Max(1, Progress->UnlockedLevel));
+        // 关卡数据改过（机关、宝箱谜题或道具布局变了）时，旧续局里的机关状态会错位，整局丢弃
+        if (Progress->bHasActiveRound
+            && (!Levels.IsValidIndex(Progress->ActiveLevel - 1)
+                || Progress->ActiveLevelFingerprint
+                    != FXiaomaPuzzle::AdventureFingerprint(Levels[Progress->ActiveLevel - 1])))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("续局与当前关卡布局不一致，已丢弃进行中的对局"));
+            Progress->ClearActiveRound();
+        }
     }
 
     Board = GetWorld()->SpawnActor<AXiaomaBoardActor>(AXiaomaBoardActor::StaticClass());
@@ -100,6 +113,16 @@ void AXiaomaGameMode::BeginPlay()
     SetScreen(EXiaomaScreen::Menu);
 }
 
+void AXiaomaGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // 直接关窗口时不会有暂停/回菜单，只能在这里补一次落盘；没脏就不重复写
+    if (Screen == EXiaomaScreen::Playing && Progress && Progress->bHasActiveRound && bRoundDirty)
+    {
+        SaveProgress();
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
 const FXiaomaLevel* AXiaomaGameMode::GetCurrentLevel() const
 {
     return Levels.IsValidIndex(CurrentLevelIndex) ? &Levels[CurrentLevelIndex] : nullptr;
@@ -120,7 +143,7 @@ bool AXiaomaGameMode::IsCellBlocked(FIntPoint Cell) const
 int32 AXiaomaGameMode::GetUnlockedLevel() const { return Progress ? Progress->UnlockedLevel : 1; }
 int32 AXiaomaGameMode::GetContinueLevel() const
 {
-    return Progress && Progress->bHasActiveRound ? Progress->ActiveLevel : GetUnlockedLevel();
+    return Progress ? Progress->GetContinueLevel(Levels.Num()) : 1;
 }
 int32 AXiaomaGameMode::GetParSteps() const
 {
@@ -193,23 +216,123 @@ void AXiaomaGameMode::PlayFeedback(const TCHAR* Name)
 
 void AXiaomaGameMode::SaveProgress()
 {
-    if (Progress)
+    if (!Progress)
     {
-        if (Screen == EXiaomaScreen::Playing && CurrentLevelIndex >= 0)
+        return;
+    }
+    CaptureActiveRound();
+    bRoundDirty = false;
+    LastRoundSaveAt = FPlatformTime::Seconds();
+    UGameplayStatics::SaveGameToSlot(Progress, SaveSlot, 0);
+}
+
+bool AXiaomaGameMode::CanResumeActiveRound(const FXiaomaLevel& Level) const
+{
+    return Progress && Progress->CanResume(Level);
+}
+
+void AXiaomaGameMode::CaptureActiveRound()
+{
+    if (!Progress || Screen != EXiaomaScreen::Playing || !Levels.IsValidIndex(CurrentLevelIndex))
+    {
+        return;
+    }
+    const FXiaomaLevel& Level = Levels[CurrentLevelIndex];
+    Progress->bHasActiveRound = true;
+    Progress->ActiveLevel = CurrentLevelIndex + 1;
+    Progress->ActiveCells = Cells;
+    Progress->ActiveStepCount = StepCount;
+    Progress->ActiveHintsUsed = HintsUsed;
+    Progress->ActiveWrongAttempts = WrongAttempts;
+    Progress->ActiveHintTokens = HintTokens;
+    Progress->ActivePettedMask = PettedMask;
+    Progress->ActiveHasClover = bHasClover;
+    Progress->ActiveHerdsmanCell = Herdsman ? Herdsman->GetCurrentCell() : Level.Adventure.StartCell;
+    Progress->ActiveLevelFingerprint = FXiaomaPuzzle::AdventureFingerprint(Level);
+    Progress->Lives = CurrentLives;
+
+    Progress->ActivePickupCollected.Reset();
+    for (const AXiaomaPickup* Pickup : Pickups)
+    {
+        Progress->ActivePickupCollected.Add(Pickup && Pickup->IsCollected());
+    }
+
+    TArray<TArray<uint8>> States;
+    States.Reserve(Mechanisms.Num());
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        TArray<uint8> State;
+        if (Mech)
         {
-            Progress->bHasActiveRound = true;
-            Progress->ActiveLevel = CurrentLevelIndex + 1;
-            Progress->ActiveCells = Cells;
-            Progress->ActiveHintsUsed = HintsUsed;
-            Progress->ActiveWrongAttempts = WrongAttempts;
-            Progress->Lives = CurrentLives;
+            Mech->SaveState(State);
         }
-        UGameplayStatics::SaveGameToSlot(Progress, SaveSlot, 0);
+        States.Add(MoveTemp(State));
+    }
+    FXiaomaMechanismStateCodec::Encode(States, Progress->ActiveMechanismStates);
+}
+
+void AXiaomaGameMode::RestoreActiveRound(const FXiaomaLevel& Level)
+{
+    if (!Progress)
+    {
+        return;
+    }
+    StepCount = FMath::Max(0, Progress->ActiveStepCount);
+    HintTokens = FMath::Max(0, Progress->ActiveHintTokens);
+    PettedMask = Progress->ActivePettedMask;
+    bHasClover = Progress->ActiveHasClover;
+
+    TArray<TArray<uint8>> States;
+    if (!FXiaomaMechanismStateCodec::Decode(Progress->ActiveMechanismStates, States))
+    {
+        // 状态流损坏：整关按新开局处理，不要恢复出一半正常一半诡异的机关
+        UE_LOG(LogTemp, Warning, TEXT("机关状态数据损坏，本关按新开局处理"));
+        Progress->ClearActiveRound();
+        ResetBoard();
+        StepCount = 0;
+        HintTokens = 0;
+        PettedMask = 0;
+        bHasClover = false;
+        CurrentLives = Level.Adventure.StartLives;
+        Progress->Lives = CurrentLives;
+        for (AXiaomaPickup* Pickup : Pickups)
+        {
+            if (Pickup) Pickup->SetCollected(false);
+        }
+        if (Herdsman)
+        {
+            Herdsman->TeleportToCell(Level.Adventure.StartCell);
+        }
+        // 棋盘刚被清空，让规则宝箱跟着回到未解锁状态
+        NotifyMechanismsBoardChanged();
+        return;
+    }
+
+    for (int32 Index = 0; Index < Pickups.Num() && Index < Progress->ActivePickupCollected.Num(); ++Index)
+    {
+        if (Pickups[Index])
+        {
+            Pickups[Index]->SetCollected(Progress->ActivePickupCollected[Index]);
+        }
+    }
+    for (int32 Index = 0; Index < Mechanisms.Num() && Index < States.Num(); ++Index)
+    {
+        if (Mechanisms[Index])
+        {
+            Mechanisms[Index]->LoadState(States[Index]);
+        }
     }
 }
 
 void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
 {
+    // 离开进行中状态（暂停、通关、失败、回菜单）之前先落盘，避免最近几格移动丢掉。
+    // 通关/失败时 bHasActiveRound 已被置为 false，这里不会把已结束的对局又写回去。
+    if (Screen == EXiaomaScreen::Playing && NewScreen != EXiaomaScreen::Playing
+        && Progress && Progress->bHasActiveRound)
+    {
+        SaveProgress();
+    }
     Screen = NewScreen;
     if (bWheelOpen)
     {
@@ -508,8 +631,9 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     }
     CurrentLevelIndex = LevelNumber - 1;
     const FXiaomaLevel& Level = Levels[CurrentLevelIndex];
-    const bool bResume = Progress->bHasActiveRound && Progress->ActiveLevel == LevelNumber
-        && Progress->ActiveCells.Num() == FXiaomaPuzzle::CellCount && Progress->Lives > 0;
+    const bool bResume = CanResumeActiveRound(Level);
+    // 「继续游戏」要回到玩家真正玩到的地方，不能靠解锁进度猜
+    Progress->LastPlayedLevel = LevelNumber;
 
     HintsUsed = bResume ? Progress->ActiveHintsUsed : 0;
     WrongAttempts = bResume ? Progress->ActiveWrongAttempts : 0;
@@ -519,6 +643,7 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     PettedMask = 0;
     bHasClover = false;
     bOverviewToggleState = false;
+    bRoundDirty = false;
     if (Herdsman) Herdsman->SetOverviewCamera(false);
 
     if (bResume)
@@ -537,14 +662,27 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     }
     SpawnAdventureActors();
 
+    // 续局时回到上次站的位置，而不是一律回起点
+    FIntPoint SpawnCell = Level.Adventure.StartCell;
+    if (bResume && Progress->ActiveHerdsmanCell.X >= 0 && Progress->ActiveHerdsmanCell.Y >= 0)
+    {
+        SpawnCell = Progress->ActiveHerdsmanCell;
+    }
+
     if (Herdsman)
     {
         Herdsman->SetCellBlockedPredicate([this](FIntPoint Cell) { return IsCellBlocked(Cell); });
-        Herdsman->TeleportToCell(Level.Adventure.StartCell);
+        Herdsman->TeleportToCell(SpawnCell);
         if (Board)
         {
             Board->SetHighlightedCell(Herdsman->GetCurrentCellIndex());
         }
+    }
+
+    if (bResume)
+    {
+        // 机关与道具是在 SpawnAdventureActors 里新建的，必须等它们都就位后再贴存档状态
+        RestoreActiveRound(Level);
     }
 
     StatusMessage = TEXT("WASD 移动，E 打开召唤轮盘或开箱，F 标记排除，Tab 看全局");
@@ -604,6 +742,12 @@ void AXiaomaGameMode::OnHerdsmanCellChanged(FIntPoint NewCell)
     if (GameWidget)
     {
         GameWidget->Refresh();
+    }
+    // 走格子会改步数、踩亮符文、拾取道具，这些都不经过其他存档点，只能在这里标脏后节流落盘
+    bRoundDirty = true;
+    if (FPlatformTime::Seconds() - LastRoundSaveAt >= RoundSaveIntervalSeconds)
+    {
+        SaveProgress();
     }
 }
 
@@ -1078,6 +1222,8 @@ void AXiaomaGameMode::SubmitAnswer()
         PlayFeedback(TEXT("Win"));
         Progress->BestStreak = FMath::Max(Progress->BestStreak, Progress->WinStreak);
         Progress->bHasActiveRound = false;
+        // 通关后「继续游戏」落到下一关；最后一关则停在最后一关
+        Progress->LastPlayedLevel = FMath::Min(Levels.Num(), CurrentLevelIndex + 2);
         StatusMessage = FString::Printf(TEXT("通关！步数 %d/%d，获得 %d 颗星，好感度 +5"),
             StepCount, Par, Stars);
         SetScreen(EXiaomaScreen::Won);

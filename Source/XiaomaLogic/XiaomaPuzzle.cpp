@@ -450,3 +450,53 @@ FIntPoint FXiaomaPuzzle::FindHint(const FXiaomaLevel& Level, const TArray<uint8>
     }
     return FIntPoint(-1, -1);
 }
+
+int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
+{
+    // FNV-1a，只求稳定、不要求分布性质
+    uint32 Hash = 2166136261u;
+    auto Mix = [&Hash](int32 Value)
+    {
+        Hash ^= static_cast<uint32>(Value);
+        Hash *= 16777619u;
+    };
+
+    Mix(Level.Id);
+
+    Mix(Level.Adventure.Obstacles.Num());
+    for (const FIntPoint& Cell : Level.Adventure.Obstacles)
+    {
+        Mix(Cell.X);
+        Mix(Cell.Y);
+    }
+
+    Mix(Level.Adventure.Chests.Num());
+    for (const FXiaomaChestDef& Chest : Level.Adventure.Chests)
+    {
+        Mix(Chest.Cell.X);
+        Mix(Chest.Cell.Y);
+        Mix(static_cast<int32>(Chest.Reward));
+        Mix(static_cast<int32>(Chest.PuzzleType));
+        Mix(Chest.RuleIndex);
+        Mix(Chest.RuneOrder.Num());
+        for (const FIntPoint& Rune : Chest.RuneOrder)
+        {
+            Mix(Rune.X);
+            Mix(Rune.Y);
+        }
+        Mix(Chest.SteleCell.X);
+        Mix(Chest.SteleCell.Y);
+        Mix(Chest.SteleAnswer.X);
+        Mix(Chest.SteleAnswer.Y);
+    }
+
+    Mix(Level.Adventure.Items.Num());
+    for (const FXiaomaItemDef& Item : Level.Adventure.Items)
+    {
+        Mix(static_cast<int32>(Item.Type));
+        Mix(Item.Cell.X);
+        Mix(Item.Cell.Y);
+    }
+
+    return static_cast<int32>(Hash & 0x7fffffffu);
+}
