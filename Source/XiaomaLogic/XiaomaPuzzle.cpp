@@ -206,8 +206,29 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                         const TSharedPtr<FJsonObject>* PuzzleObj = nullptr;
                         if (ChestObj->TryGetObjectField(TEXT("puzzle"), PuzzleObj) && PuzzleObj && (*PuzzleObj).IsValid())
                         {
+                            const TSharedPtr<FJsonObject>& Puzzle = *PuzzleObj;
+
+                            FString PuzzleTypeStr;
+                            Puzzle->TryGetStringField(TEXT("type"), PuzzleTypeStr);
+                            if (PuzzleTypeStr.Equals(TEXT("runes"), ESearchCase::IgnoreCase))
+                            {
+                                Def.PuzzleType = EXiaomaChestPuzzleType::Runes;
+                            }
+                            else if (PuzzleTypeStr.Equals(TEXT("stele"), ESearchCase::IgnoreCase))
+                            {
+                                Def.PuzzleType = EXiaomaChestPuzzleType::Stele;
+                            }
+                            else if (PuzzleTypeStr.Equals(TEXT("push"), ESearchCase::IgnoreCase))
+                            {
+                                Def.PuzzleType = EXiaomaChestPuzzleType::Push;
+                            }
+                            else
+                            {
+                                Def.PuzzleType = EXiaomaChestPuzzleType::Rule;
+                            }
+
                             FString RuleTarget;
-                            if ((*PuzzleObj)->TryGetStringField(TEXT("target"), RuleTarget))
+                            if (Puzzle->TryGetStringField(TEXT("target"), RuleTarget))
                             {
                                 if (RuleTarget.Equals(TEXT("col"), ESearchCase::IgnoreCase)
                                     || RuleTarget.Equals(TEXT("column"), ESearchCase::IgnoreCase))
@@ -224,12 +245,64 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                                 }
                             }
                             int32 IndexVal = 0;
-                            if ((*PuzzleObj)->TryGetNumberField(TEXT("index"), IndexVal))
+                            if (Puzzle->TryGetNumberField(TEXT("index"), IndexVal))
                             {
                                 Def.RuleIndex = FMath::Clamp(IndexVal, 0, Size - 1);
                             }
+
+                            // 符文顺序
+                            const TArray<TSharedPtr<FJsonValue>>* OrderArr = nullptr;
+                            if (Puzzle->TryGetArrayField(TEXT("order"), OrderArr) && OrderArr)
+                            {
+                                for (const TSharedPtr<FJsonValue>& StepVal : *OrderArr)
+                                {
+                                    const TArray<TSharedPtr<FJsonValue>>* StepArr = nullptr;
+                                    FIntPoint Step;
+                                    if (StepVal->TryGetArray(StepArr) && StepArr && ParseIntPoint(*StepArr, Step))
+                                    {
+                                        Def.RuneOrder.Add(Step);
+                                    }
+                                }
+                            }
+
+                            // 石碑线索与埋藏格
+                            const TSharedPtr<FJsonObject>* ClueObj = nullptr;
+                            if (Puzzle->TryGetObjectField(TEXT("clue"), ClueObj) && ClueObj && (*ClueObj).IsValid())
+                            {
+                                (*ClueObj)->TryGetStringField(TEXT("text"), Def.ClueText);
+                                const TArray<TSharedPtr<FJsonValue>>* ClueCellArr = nullptr;
+                                FIntPoint ClueCell;
+                                if ((*ClueObj)->TryGetArrayField(TEXT("cell"), ClueCellArr) && ClueCellArr
+                                    && ParseIntPoint(*ClueCellArr, ClueCell))
+                                {
+                                    Def.SteleCell = ClueCell;
+                                }
+                            }
+                            const TArray<TSharedPtr<FJsonValue>>* AnswerArr = nullptr;
+                            FIntPoint AnswerCell;
+                            if (Puzzle->TryGetArrayField(TEXT("answer"), AnswerArr) && AnswerArr
+                                && ParseIntPoint(*AnswerArr, AnswerCell))
+                            {
+                                Def.SteleAnswer = AnswerCell;
+                            }
                         }
                         Level.Adventure.Chests.Add(Def);
+                    }
+                }
+            }
+
+            // 静态障碍
+            const TArray<TSharedPtr<FJsonValue>>* ObstaclesArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("obstacles"), ObstaclesArr) && ObstaclesArr)
+            {
+                for (const TSharedPtr<FJsonValue>& ObstacleVal : *ObstaclesArr)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* ObstacleCellArr = nullptr;
+                    FIntPoint ObstacleCell;
+                    if (ObstacleVal->TryGetArray(ObstacleCellArr) && ObstacleCellArr
+                        && ParseIntPoint(*ObstacleCellArr, ObstacleCell))
+                    {
+                        Level.Adventure.Obstacles.Add(ObstacleCell);
                     }
                 }
             }

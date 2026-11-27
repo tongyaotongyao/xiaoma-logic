@@ -105,6 +105,18 @@ const FXiaomaLevel* AXiaomaGameMode::GetCurrentLevel() const
     return Levels.IsValidIndex(CurrentLevelIndex) ? &Levels[CurrentLevelIndex] : nullptr;
 }
 
+bool AXiaomaGameMode::IsCellBlocked(FIntPoint Cell) const
+{
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (Mech && Mech->BlocksCell(Cell))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 int32 AXiaomaGameMode::GetUnlockedLevel() const { return Progress ? Progress->UnlockedLevel : 1; }
 int32 AXiaomaGameMode::GetContinueLevel() const
 {
@@ -450,6 +462,17 @@ void AXiaomaGameMode::SpawnAdventureActors()
     {
         return;
     }
+    for (const FIntPoint& ObstacleCell : Level->Adventure.Obstacles)
+    {
+        AXiaomaObstacle* Obstacle = GetWorld()->SpawnActor<AXiaomaObstacle>(AXiaomaObstacle::StaticClass());
+        if (Obstacle)
+        {
+            // 按格子序号轮换外观，让同一关里不出现一模一样的石头
+            const int32 Variant = ObstacleCell.X * FXiaomaPuzzle::Size + ObstacleCell.Y;
+            Obstacle->SetupObstacle(ObstacleCell, Board->GetCellWorldLocation(ObstacleCell), Variant);
+            Mechanisms.Add(Obstacle);
+        }
+    }
     for (const FXiaomaChestDef& ChestDef : Level->Adventure.Chests)
     {
         AXiaomaChest* Chest = GetWorld()->SpawnActor<AXiaomaChest>(AXiaomaChest::StaticClass());
@@ -458,6 +481,8 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Chest->SetupChest(ChestDef, Board->GetCellWorldLocation(ChestDef.Cell));
             Chest->SetOnOpened(FXiaomaChestOpenedDelegate::CreateUObject(
                 this, &AXiaomaGameMode::OnChestOpened));
+            Chest->SetOnNotice(FXiaomaChestNoticeDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnChestNotice));
             Mechanisms.Add(Chest);
         }
     }
@@ -514,6 +539,7 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
 
     if (Herdsman)
     {
+        Herdsman->SetCellBlockedPredicate([this](FIntPoint Cell) { return IsCellBlocked(Cell); });
         Herdsman->TeleportToCell(Level.Adventure.StartCell);
         if (Board)
         {
@@ -603,14 +629,28 @@ void AXiaomaGameMode::InteractPressed()
         {
             if (const AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech))
             {
-                if (!Chest->IsUnlocked() && !Chest->IsClaimed())
+                const FXiaomaChestDef& Def = Chest->GetDef();
+                bool bShowPrompt = false;
+                if (!Chest->IsClaimed()
+                    && Def.PuzzleType == EXiaomaChestPuzzleType::Stele
+                    && Cell == Def.SteleCell && !Def.ClueText.IsEmpty())
                 {
-                    const FXiaomaChestDef& Def = Chest->GetDef();
-                    const TCHAR* RuleText = Def.RuleType == EXiaomaChestRuleType::Row ? TEXT("对应行")
-                        : (Def.RuleType == EXiaomaChestRuleType::Column ? TEXT("对应列") : TEXT("对应颜色区域"));
-                    StatusMessage = FString::Printf(TEXT("宝箱上锁中：在%s第 %d 格放对小马即可开启"),
-                        RuleText, Def.RuleIndex + 1);
-                    if (GameWidget) GameWidget->Refresh();
+                    // 站在石碑上按 E：念出线索，代替轮盘
+                    StatusMessage = FString::Printf(TEXT("石碑：%s"), *Def.ClueText);
+                    bShowPrompt = true;
+                }
+                else if (!Chest->IsClaimed())
+                {
+                    const FString Prompt = Chest->BuildPrompt();
+                    if (!Prompt.IsEmpty())
+                    {
+                        StatusMessage = Prompt;
+                        bShowPrompt = true;
+                    }
+                }
+                if (bShowPrompt && GameWidget)
+                {
+                    GameWidget->Refresh();
                 }
             }
             return;
@@ -623,6 +663,15 @@ void AXiaomaGameMode::InteractPressed()
         return;
     }
     const int32 Idx = Cell.X * FXiaomaPuzzle::Size + Cell.Y;
+
+    // 障碍格既不能站人也不能放马，轮盘直接不给开
+    if (IsCellBlocked(Cell))
+    {
+        PlayFeedback(TEXT("Error"));
+        StatusMessage = TEXT("这一格被障碍占住了，换个格子再召唤");
+        if (GameWidget) GameWidget->Refresh();
+        return;
+    }
 
     // 模式 2：直接放置或请回当前地板颜色的小马
     if (GetSummonMode() == EXiaomaSummonMode::DirectRegion)
@@ -713,6 +762,13 @@ void AXiaomaGameMode::OnWheelSelectColour(int32 ColourIndex)
     const int32 Idx = Herdsman->GetCurrentCellIndex();
     if (!Cells.IsValidIndex(Idx))
     {
+        return;
+    }
+    if (IsCellBlocked(Herdsman->GetCurrentCell()))
+    {
+        PlayFeedback(TEXT("Error"));
+        StatusMessage = TEXT("这一格被障碍占住了，小马进不来");
+        if (GameWidget) GameWidget->Refresh();
         return;
     }
     if (Level->Regions[Idx] != ColourIndex)
@@ -877,6 +933,16 @@ void AXiaomaGameMode::OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FStr
 {
     PushUndoSnapshot();
     GrantItemReward(Reward, TEXT("开启宝箱"));
+}
+
+void AXiaomaGameMode::OnChestNotice(const FString& Message, bool bPositive)
+{
+    StatusMessage = Message;
+    PlayFeedback(bPositive ? TEXT("Place") : TEXT("Error"));
+    if (GameWidget)
+    {
+        GameWidget->Refresh();
+    }
 }
 
 void AXiaomaGameMode::OnPickupCollected(EXiaomaItemType ItemType, FIntPoint Cell)

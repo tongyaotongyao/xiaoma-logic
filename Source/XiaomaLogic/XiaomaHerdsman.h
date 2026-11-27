@@ -34,6 +34,13 @@ public:
     FIntPoint GetCurrentCell() const { return CurrentCell; }
     int32 GetCurrentCellIndex() const { return CurrentCell.X * 6 + CurrentCell.Y; }
 
+    /** 由 GameMode 注入：某一格当前是否被机关封住（障碍、关上的围栏等） */
+    void SetCellBlockedPredicate(TFunction<bool(FIntPoint)> InPredicate)
+    {
+        CellBlocked = MoveTemp(InPredicate);
+    }
+    bool IsBlockedAt(const FVector& Location) const;
+
     void SetOnCellChanged(FXiaomaHerdsmanCellDelegate InDelegate) { OnCellChanged = InDelegate; }
     virtual void Tick(float DeltaSeconds) override;
 
@@ -62,4 +69,5 @@ private:
     float BoostRemaining = 0.f;
     float WalkCycle = 0.f;
     FXiaomaHerdsmanCellDelegate OnCellChanged;
+    TFunction<bool(FIntPoint)> CellBlocked;
 };

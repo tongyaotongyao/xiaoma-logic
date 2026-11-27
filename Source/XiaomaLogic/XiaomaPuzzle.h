@@ -19,6 +19,15 @@ enum class EXiaomaChestRuleType : uint8
     Region
 };
 
+/** 开箱谜题类型：规则开箱已落地，符文与石碑随 M3 加入，推箱留到 M4 */
+enum class EXiaomaChestPuzzleType : uint8
+{
+    Rule,
+    Runes,
+    Stele,
+    Push
+};
+
 /** 关卡中场上道具配置 */
 struct FXiaomaItemDef
 {
@@ -26,13 +35,24 @@ struct FXiaomaItemDef
     FIntPoint Cell = FIntPoint(0, 0);
 };
 
-/** 关卡中宝箱配置（M2 先落地规则开箱） */
+/** 关卡中宝箱配置 */
 struct FXiaomaChestDef
 {
     FIntPoint Cell = FIntPoint(0, 0);
     EXiaomaItemType Reward = EXiaomaItemType::Hint;
+    EXiaomaChestPuzzleType PuzzleType = EXiaomaChestPuzzleType::Rule;
+
+    /** 规则开箱：绑定哪一行/列/色区 */
     EXiaomaChestRuleType RuleType = EXiaomaChestRuleType::Row;
     int32 RuleIndex = 0;
+
+    /** 符文宝箱：按此顺序踩亮这些格才会开箱 */
+    TArray<FIntPoint> RuneOrder;
+
+    /** 石碑宝箱：石碑立在 SteleCell，读到的提示是 ClueText，宝箱埋在 SteleAnswer */
+    FIntPoint SteleCell = FIntPoint(-1, -1);
+    FString ClueText;
+    FIntPoint SteleAnswer = FIntPoint(-1, -1);
 };
 
 /** 关卡中的冒险模式扩展数据 */
@@ -43,6 +63,8 @@ struct FXiaomaAdventureData
     int32 StartLives = 3;
     TArray<FXiaomaItemDef> Items;
     TArray<FXiaomaChestDef> Chests;
+    /** 静态障碍：占据整格，主角不能进入，也不能召唤小马 */
+    TArray<FIntPoint> Obstacles;
 };
 
 struct FXiaomaLevel

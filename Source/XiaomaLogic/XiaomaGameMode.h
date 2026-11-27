@@ -130,6 +130,9 @@ public:
     AXiaomaHerdsman* GetHerdsman() const { return Herdsman; }
     const FXiaomaLevel* GetCurrentLevel() const;
 
+    /** 这一格当前是否被机关封住（障碍、未打开的围栏等） */
+    bool IsCellBlocked(FIntPoint Cell) const;
+
 private:
     void SetScreen(EXiaomaScreen NewScreen);
     void RefreshBoardAndUI();
@@ -142,6 +145,7 @@ private:
     void OnWheelSelectColour(int32 ColourIndex);
     void OnWheelRecall();
     void OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FString& OutMessage);
+    void OnChestNotice(const FString& Message, bool bPositive);
     void OnPickupCollected(EXiaomaItemType ItemType, FIntPoint Cell);
     void GrantItemReward(EXiaomaItemType ItemType, const TCHAR* SourceLabel);
     void NotifyMechanismsBoardChanged();

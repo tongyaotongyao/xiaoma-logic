@@ -95,6 +95,11 @@ FVector AXiaomaHerdsman::CellToWorld(FIntPoint Cell)
     return FVector((5 - Cell.Y) * CellStep, (5 - Cell.X) * CellStep, HerdsmanPlaneZ);
 }
 
+bool AXiaomaHerdsman::IsBlockedAt(const FVector& Location) const
+{
+    return CellBlocked ? CellBlocked(WorldToRawCell(Location)) : false;
+}
+
 FIntPoint AXiaomaHerdsman::WorldToRawCell(const FVector& Location)
 {
     const int32 Row = FMath::Clamp(FMath::RoundToInt(5.f - Location.Y / CellStep), 0, 5);
@@ -191,23 +196,48 @@ void AXiaomaHerdsman::Tick(float DeltaSeconds)
 
     if (!Dir.IsNearlyZero())
     {
-        FVector Loc = GetActorLocation();
-        Loc.X = FMath::Clamp(Loc.X + Dir.X * Speed * DeltaSeconds, BoardMinXY, BoardMaxXY);
-        Loc.Y = FMath::Clamp(Loc.Y + Dir.Y * Speed * DeltaSeconds, BoardMinXY, BoardMaxXY);
-        Loc.Z = HerdsmanPlaneZ;
-        SetActorLocation(Loc);
+        const FVector Loc = GetActorLocation();
+        FVector Next = Loc;
+
+        // 分轴推进：某一轴被机关挡住时，另一轴仍可沿墙滑行
+        const FVector TryX(Loc.X + Dir.X * Speed * DeltaSeconds, Loc.Y, HerdsmanPlaneZ);
+        if (!IsBlockedAt(TryX))
+        {
+            Next.X = FMath::Clamp(TryX.X, BoardMinXY, BoardMaxXY);
+        }
+        const FVector TryY(Next.X, Loc.Y + Dir.Y * Speed * DeltaSeconds, HerdsmanPlaneZ);
+        if (!IsBlockedAt(TryY))
+        {
+            Next.Y = FMath::Clamp(TryY.Y, BoardMinXY, BoardMaxXY);
+        }
+
+        const bool bMoved = !Next.Equals(Loc, 0.01f);
+        if (bMoved)
+        {
+            Next.Z = HerdsmanPlaneZ;
+            SetActorLocation(Next);
+        }
 
         const float TargetYaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
         const FRotator NewRot = FMath::RInterpTo(GetActorRotation(), FRotator(0.f, TargetYaw, 0.f), DeltaSeconds, 14.f);
         SetActorRotation(NewRot);
 
-        WalkCycle += DeltaSeconds * (BoostRemaining > 0.f ? 15.f : 11.f);
-        if (VisualRoot)
+        if (bMoved)
         {
-            const float Hop = FMath::Abs(FMath::Sin(WalkCycle)) * 7.f;
-            VisualRoot->SetRelativeLocation(FVector(0.f, 0.f, -44.f + Hop));
+            WalkCycle += DeltaSeconds * (BoostRemaining > 0.f ? 15.f : 11.f);
+            if (VisualRoot)
+            {
+                const float Hop = FMath::Abs(FMath::Sin(WalkCycle)) * 7.f;
+                VisualRoot->SetRelativeLocation(FVector(0.f, 0.f, -44.f + Hop));
+            }
+            UpdateCurrentCell();
         }
-        UpdateCurrentCell();
+        else if (VisualRoot)
+        {
+            // 顶住了障碍：停下脚步，别原地空踩
+            const FVector Cur = VisualRoot->GetRelativeLocation();
+            VisualRoot->SetRelativeLocation(FMath::VInterpTo(Cur, FVector(0.f, 0.f, -44.f), DeltaSeconds, 12.f));
+        }
     }
     else if (VisualRoot)
     {
