@@ -21,6 +21,21 @@ const TCHAR* PonyAssetPaths[6] = {
     TEXT("/Game/Ponies/Pony_Yellow.Pony_Yellow"),
     TEXT("/Game/Ponies/Pony_Mint.Pony_Mint")
 };
+
+/**
+ * 小马的显示与碰撞必须一起切换。
+ * USceneComponent::SetVisibility 只影响渲染，隐藏的网格照样挡住 Visibility 射线，
+ * 会在空格子上命中一匹不存在的小马（抚摸误触）。
+ */
+void SetPonyVisible(UStaticMeshComponent* Pony, bool bVisible)
+{
+    if (!Pony)
+    {
+        return;
+    }
+    Pony->SetVisibility(bVisible);
+    Pony->SetCollisionEnabled(bVisible ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+}
 }
 
 AXiaomaBoardActor::AXiaomaBoardActor()
@@ -102,7 +117,7 @@ void AXiaomaBoardActor::BuildBoard(const FXiaomaLevel& Level)
         Pony->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
         Pony->RegisterComponent();
         AddInstanceComponent(Pony);
-        Pony->SetVisibility(false);
+        SetPonyVisible(Pony, false);
         Ponies.Add(Pony);
 
         for (const float Yaw : {45.f, -45.f})
@@ -216,7 +231,7 @@ void AXiaomaBoardActor::RefreshBoard(const FXiaomaLevel& Level, const TArray<uin
         {
             HopTime[Index] = 0.f;
         }
-        Ponies[Index]->SetVisibility(bShowPony);
+        SetPonyVisible(Ponies[Index], bShowPony);
         MarkStrokesA[Index]->SetVisibility(Cells[Index] == 1);
         MarkStrokesB[Index]->SetVisibility(Cells[Index] == 1);
     }
@@ -233,19 +248,19 @@ void AXiaomaBoardActor::RefreshBoard(const FXiaomaLevel& Level, const TArray<uin
             {
                 StandbyStartPos[Colour] = GetStandbyLocation(Colour);
                 StandbyEndPos[Colour] = PonyRestPositions[PlacedCellByRegion[Colour]];
-                StandbyPonies[Colour]->SetVisibility(true);
+                SetPonyVisible(StandbyPonies[Colour], true);
             }
             else
             {
                 StandbyStartPos[Colour] = StandbyPonies[Colour]->GetRelativeLocation();
                 StandbyEndPos[Colour] = GetStandbyLocation(Colour);
-                StandbyPonies[Colour]->SetVisibility(true);
+                SetPonyVisible(StandbyPonies[Colour], true);
             }
             SetActorTickEnabled(true);
         }
         else if (StandbyTravelTime[Colour] <= 0.f)
         {
-            StandbyPonies[Colour]->SetVisibility(bShouldStandby);
+            SetPonyVisible(StandbyPonies[Colour], bShouldStandby);
             if (bShouldStandby)
             {
                 StandbyPonies[Colour]->SetRelativeLocation(GetStandbyLocation(Colour));
@@ -315,16 +330,18 @@ int32 AXiaomaBoardActor::FindPonyColour(const UPrimitiveComponent* Component) co
     {
         return INDEX_NONE;
     }
+    // 只能抚摸看得见的小马：每格常驻一个小马组件，隐藏时若不判可见性，
+    // 空格子也会被当成「点了这匹小马」
     for (int32 Colour = 0; Colour < StandbyPonies.Num(); ++Colour)
     {
-        if (StandbyPonies[Colour] == Component)
+        if (StandbyPonies[Colour] == Component && StandbyPonies[Colour]->IsVisible())
         {
             return Colour;
         }
     }
     for (int32 Index = 0; Index < Ponies.Num(); ++Index)
     {
-        if (Ponies[Index] == Component && RegionAtCell.IsValidIndex(Index))
+        if (Ponies[Index] == Component && Ponies[Index]->IsVisible() && RegionAtCell.IsValidIndex(Index))
         {
             return RegionAtCell[Index];
         }
@@ -389,7 +406,7 @@ void AXiaomaBoardActor::Tick(float DeltaSeconds)
             if (StandbyTravelTime[Colour] <= 0.f)
             {
                 StandbyPonies[Colour]->SetRelativeLocation(GetStandbyLocation(Colour));
-                StandbyPonies[Colour]->SetVisibility(StandbyTargetVisible[Colour]);
+                SetPonyVisible(StandbyPonies[Colour], StandbyTargetVisible[Colour]);
             }
             else
             {

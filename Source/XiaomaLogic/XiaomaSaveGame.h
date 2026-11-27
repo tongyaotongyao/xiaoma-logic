@@ -78,6 +78,26 @@ public:
         LevelRevision = XiaomaSave::LevelRevision;
     }
 
+    /**
+     * 召唤方式默认值迁移。
+     * 旧版本 0 表示「长按轮盘」，而轮盘里只有当前格颜色能放，选别的颜色一定失败；
+     * 于是把 0 当作「从未改过设置」，一次性改成 2（直接放当前色）。
+     * 用户之后手动选回轮盘（0）时 bSummonModeMigrated 已是 true，不会被再迁移。
+     * 新增字段默认 false，老存档反序列化后同样为 false，所以不需要升 LevelRevision 丢续局。
+     */
+    void MigrateSummonMode()
+    {
+        if (bSummonModeMigrated)
+        {
+            return;
+        }
+        if (SummonMode == 0)
+        {
+            SummonMode = 2;
+        }
+        bSummonModeMigrated = true;
+    }
+
     /** 丢弃进行中的对局，但保留解锁、星级、好感度、连胜与所有设置 */
     void ClearActiveRound()
     {
@@ -166,9 +186,13 @@ public:
     UPROPERTY(SaveGame)
     bool bSoundEnabled = true;
 
-    /** 0: 长按打开轮盘松手确认, 1: 按一下切换轮盘, 2: 直接放当前格颜色 */
+    /** 0: 长按打开轮盘松手确认, 1: 按一下切换轮盘, 2: 直接放当前格颜色（默认） */
     UPROPERTY(SaveGame)
     uint8 SummonMode = 0;
+
+    /** 召唤方式默认值是否已迁移到「直接放当前色」；见 MigrateSummonMode */
+    UPROPERTY(SaveGame)
+    bool bSummonModeMigrated = false;
 
     /** 0: 按一下 Tab 切换全局/跟随, 1: 按住 Tab 看全局 */
     UPROPERTY(SaveGame)

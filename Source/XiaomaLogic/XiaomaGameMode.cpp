@@ -58,6 +58,8 @@ void AXiaomaGameMode::BeginPlay()
     if (Progress)
     {
         Progress->MigrateLevelRevision();
+        // 轮盘里只有当前格颜色放得上去，等于让玩家自己挑错误答案；默认改成直接放当前色
+        Progress->MigrateSummonMode();
         // 解锁进度被回退或存档异常时，续局关卡不能越过已经解锁的范围
         Progress->ActiveLevel = FMath::Clamp(Progress->ActiveLevel, 1, FMath::Max(1, Progress->UnlockedLevel));
         // 关卡数据改过（机关、宝箱谜题或道具布局变了）时，旧续局里的机关状态会错位，整局丢弃
