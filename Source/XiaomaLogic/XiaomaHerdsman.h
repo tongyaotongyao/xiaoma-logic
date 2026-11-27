@@ -9,6 +9,7 @@ class UCameraComponent;
 class UStaticMeshComponent;
 
 DECLARE_DELEGATE_OneParam(FXiaomaHerdsmanCellDelegate, FIntPoint /*NewCell*/);
+DECLARE_DELEGATE_RetVal_TwoParams(bool, FXiaomaHerdsmanPushDelegate, FIntPoint /*挡住去路的格*/, FIntPoint /*推动方向，每轴 -1/0/1*/);
 
 /**
  * 牧马小精灵主角：自由移动、跟随相机与 Tab 全局俯视、格子坐标换算与缓冲。
@@ -41,6 +42,12 @@ public:
     }
     bool IsBlockedAt(const FVector& Location) const;
 
+    /** 由 GameMode 注入：被木箱挡住时尝试推箱，返回 true 表示箱子已让开、可以继续走 */
+    void SetCellPushHandler(FXiaomaHerdsmanPushDelegate InHandler)
+    {
+        CellPush = MoveTemp(InHandler);
+    }
+
     void SetOnCellChanged(FXiaomaHerdsmanCellDelegate InDelegate) { OnCellChanged = InDelegate; }
     virtual void Tick(float DeltaSeconds) override;
 
@@ -51,6 +58,8 @@ private:
 
     static FVector CellToWorld(FIntPoint Cell);
     static FIntPoint WorldToRawCell(const FVector& Location);
+    /** 目标点能走就返回 true；被挡住时问一次推箱回调，箱子让开也算能走 */
+    bool CanEnterOrPush(const FVector& TargetLocation, FIntPoint StepDelta);
 
     UPROPERTY()
     TObjectPtr<USpringArmComponent> CameraBoom;
@@ -70,4 +79,5 @@ private:
     float WalkCycle = 0.f;
     FXiaomaHerdsmanCellDelegate OnCellChanged;
     TFunction<bool(FIntPoint)> CellBlocked;
+    FXiaomaHerdsmanPushDelegate CellPush;
 };

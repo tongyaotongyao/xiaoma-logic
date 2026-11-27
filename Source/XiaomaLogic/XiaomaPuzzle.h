@@ -53,6 +53,18 @@ struct FXiaomaChestDef
     FIntPoint SteleCell = FIntPoint(-1, -1);
     FString ClueText;
     FIntPoint SteleAnswer = FIntPoint(-1, -1);
+
+    /**
+     * 推箱宝箱：压力板所在格。压力板只记在这里，木箱只记自己的初始格——
+     * 同一个坐标写两处迟早会对不上，校验工具负责检查「确实有箱子能推到这块板」。
+     */
+    FIntPoint PushPlate = FIntPoint(-1, -1);
+};
+
+/** 推箱木箱：初始占据一格，主角撞上去整格推动 */
+struct FXiaomaBoxDef
+{
+    FIntPoint Cell = FIntPoint(0, 0);
 };
 
 /** 巡逻捣蛋鬼：沿 Path 的格子中心匀速往返，Speed 单位为格/秒 */
@@ -74,6 +86,8 @@ struct FXiaomaAdventureData
     TArray<FIntPoint> Obstacles;
     /** 巡逻捣蛋鬼：撞到主角扣 1 命，遇到 X 标记掉头 */
     TArray<FXiaomaPatrolDef> Patrols;
+    /** 推箱木箱：占据整格，主角撞上去会推着走 */
+    TArray<FXiaomaBoxDef> Boxes;
 };
 
 struct FXiaomaLevel

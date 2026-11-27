@@ -155,6 +155,15 @@ private:
     void OnPickupCollected(EXiaomaItemType ItemType, FIntPoint Cell);
     /** 巡逻捣蛋鬼撞到主角：扣 1 命并弹回本关起点 */
     void OnPatrollerHitHerdsman(class AXiaomaPatroller* Patroller);
+    /**
+     * 主角撞上木箱时由主角回调进来：能推就把箱子挪一格并返回 true（这一帧放行）。
+     * BoxCell 是被挡住的那一格，StepDelta 是推动方向（每轴 -1/0/1）。
+     */
+    bool TryPushBoxAtCell(FIntPoint BoxCell, FIntPoint StepDelta);
+    /** 木箱能不能进入这一格：越界、障碍、别的箱子、宝箱/石碑、没捡的道具都算不行 */
+    bool CanBoxEnter(FIntPoint Cell, const class AXiaomaMechanism* IgnoredBox) const;
+    /** 同步压力板视觉，必要时解锁推箱宝箱；bAnnounce 为真时弹提示与音效 */
+    void RefreshPushPlates(bool bAnnounce);
     void GrantItemReward(EXiaomaItemType ItemType, const TCHAR* SourceLabel);
     void NotifyMechanismsBoardChanged();
     void LoseLife(const FString& Reason);

@@ -36,7 +36,7 @@ LEVELS_PATH = ROOT / "Content" / "Levels" / "levels.json"
 ITEM_TYPES = ("hint", "apple", "carrot", "clover")
 ITEM_SYMBOL = {"hint": "h", "apple": "a", "carrot": "c", "clover": "f"}
 PUZZLE_TYPES = ("rule", "runes", "stele", "push")
-UNIMPLEMENTED_KEYS = ("ice", "bridges", "gates", "steles", "boxes")
+UNIMPLEMENTED_KEYS = ("ice", "bridges", "gates", "steles")
 
 
 def load_levels(path=LEVELS_PATH):
@@ -296,6 +296,65 @@ def check_adventure(level, errors, warnings):
                 warnings.append("%s.path %s 与主角起点同格，一进关就会挨撞" % (where, label))
         out["patrols"].append({"path": path, "speed": float(speed)})
 
+    # 推箱木箱：只记初始格；压力板来自宝箱的 puzzle.plate
+    boxes_raw = adv.get("boxes") or []
+    if not isinstance(boxes_raw, list):
+        errors.append("adventure.boxes 应为数组")
+        boxes_raw = []
+    boxes = []
+    for index, box in enumerate(boxes_raw):
+        where = "adventure.boxes[%d]" % index
+        if not isinstance(box, dict):
+            errors.append("%s 应为对象" % where)
+            continue
+        cell = parse_cell(box.get("cell"), where + ".cell", errors)
+        if cell is None:
+            continue
+        if cell in boxes:
+            errors.append("%s 与另一只木箱同格 %r" % (where, cell))
+        if cell in solution_cells:
+            errors.append("%s 的初始格 %r 是正解格，木箱挡着就放不了小马" % (where, cell))
+        if cell in obstacle_set:
+            errors.append("%s 的初始格 %r 与障碍同格" % (where, cell))
+        if cell in out["chests_cells"]:
+            errors.append("%s 的初始格 %r 与宝箱同格" % (where, cell))
+        if cell == out["start"]:
+            errors.append("%s 的初始格 %r 就是主角起点，一进关就被卡住" % (where, cell))
+        for item_kind, item_cell in out["items"]:
+            if cell == item_cell:
+                errors.append("%s 的初始格 %r 与道具 %s 同格" % (where, cell, item_kind))
+        boxes.append(cell)
+    out["boxes"] = boxes
+
+    plates = []
+    for index, chest in enumerate(chests):
+        if not isinstance(chest, dict):
+            continue
+        puzzle = chest.get("puzzle") or {}
+        if not isinstance(puzzle, dict) or puzzle.get("type") != "push":
+            continue
+        plate = as_cell(puzzle.get("plate"))
+        if not isinstance(plate, tuple):
+            continue
+        where = "adventure.chests[%d].puzzle.plate" % index
+        if plate in boxes:
+            errors.append("%s 与木箱初始格同格 %r，开局就压住了" % (where, plate))
+        if plate in obstacle_set:
+            errors.append("%s 与障碍同格 %r" % (where, plate))
+        if plate in out["chests_cells"]:
+            errors.append("%s 与宝箱同格 %r" % (where, plate))
+        for item_kind, item_cell in out["items"]:
+            if plate == item_cell:
+                errors.append("%s 与道具 %s 同格 %r，木箱压上去就拿不到了"
+                              % (where, item_kind, plate))
+        plates.append(plate)
+    out["plates"] = plates
+    if plates and not boxes:
+        errors.append("有推箱宝箱（压力板 %s）却没有任何木箱" %
+                      "、".join("(%d,%d)" % cell for cell in plates))
+    if boxes and not plates:
+        warnings.append("配了木箱但没有推箱宝箱的压力板，木箱只能推着玩")
+
     used = set()
     for key in UNIMPLEMENTED_KEYS:
         value = adv.get(key)
@@ -385,11 +444,12 @@ def check_puzzle_def(puzzle, where, errors, solution_cells):
         if answer is not None and answer in solution_cells:
             errors.append("%s.answer 是正解格 %r，挖宝会踩到小马" % (where, answer))
     elif kind == "push":
-        box = parse_cell(puzzle.get("box"), where + ".box", errors)
+        # 压力板记在宝箱上；木箱只记自己的初始格，写在 adventure.boxes 里
         plate = parse_cell(puzzle.get("plate"), where + ".plate", errors)
-        for label, cell in (("box", box), ("plate", plate)):
-            if cell is not None and cell in solution_cells:
-                errors.append("%s.%s 在正解格 %r 上" % (where, label, cell))
+        if plate is not None and plate in solution_cells:
+            errors.append("%s.plate 在正解格 %r 上，木箱压上去就放不了小马" % (where, plate))
+        if "box" in puzzle:
+            errors.append("%s 不再使用 box 字段，木箱统一写在 adventure.boxes 里" % where)
     then = puzzle.get("then")
     if then is not None:
         if not isinstance(then, dict):
@@ -466,6 +526,42 @@ def min_steps(start, targets, walkable):
 
 def par_from(minimum):
     return int(math.ceil(minimum * PAR_FACTOR))
+
+
+def box_push_states(start, boxes, walkable, box_blockers):
+    """推箱状态搜索：状态 = (主角格, 排序后的木箱格元组)。
+
+    木箱整格推动：主角走进箱子那一格，箱子往同方向挪一格；挪不动（出界、
+    撞障碍、撞别的箱子、压在道具/宝箱上）就走不过去。
+    返回全部可达状态，同时供「正解格能不能走到」与「木箱能不能压到压力板」使用。
+    """
+    start = as_cell(start)
+    if start is None or start not in walkable:
+        return set()
+    initial = tuple(sorted(as_cell(box) for box in boxes))
+    seen = {(start, initial)}
+    todo = deque([(start, initial)])
+    while todo:
+        player, state_boxes = todo.popleft()
+        for nxt in neighbours(*player):
+            if nxt in state_boxes:
+                index = state_boxes.index(nxt)
+                step = (nxt[0] - player[0], nxt[1] - player[1])
+                target = (nxt[0] + step[0], nxt[1] + step[1])
+                if target in state_boxes or target not in walkable or target in box_blockers:
+                    continue
+                moved = list(state_boxes)
+                moved[index] = target
+                key = (nxt, tuple(sorted(moved)))
+            elif nxt in walkable:
+                key = (nxt, state_boxes)
+            else:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            todo.append(key)
+    return seen
 
 
 def runes_solvable(start, order, walkable):
@@ -546,6 +642,20 @@ def render_board(level, adv):
             if isinstance(clue, dict) and "cell" in clue:
                 stele_cells.add(as_cell(clue["cell"]))
 
+    # adv 可能是 check_adventure 归一化后的结果，也可能是原始 JSON；两种形态都要认
+    boxes = set()
+    for box in (adv.get("boxes") or []) if adv else []:
+        cell = as_cell(box.get("cell")) if isinstance(box, dict) else as_cell(box)
+        if isinstance(cell, tuple):
+            boxes.add(cell)
+    plates = set()
+    for chest in (adv["chests"] if adv else []):
+        puzzle = chest.get("puzzle_def") or chest.get("puzzle") or {}
+        if isinstance(puzzle, dict) and puzzle.get("type") == "push":
+            plate = as_cell(puzzle.get("plate"))
+            if isinstance(plate, tuple):
+                plates.add(plate)
+
     lines = []
     for row in range(SIZE):
         region_line = []
@@ -566,6 +676,10 @@ def render_board(level, adv):
                 symbol = "C"
             if cell in obstacles:
                 symbol = "#"
+            if cell in plates:
+                symbol = "P"
+            if cell in boxes:
+                symbol = "B"
             if cell in patrol_paths:
                 symbol = "o"
             if cell in patrol_ends:
@@ -585,7 +699,7 @@ def describe(level, adv, minimum, computed_par):
                     "无法到达" if minimum is None else minimum,
                     "?" if computed_par is None else computed_par,
                     (level.get("adventure") or {}).get("par", "?")))
-    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线")
+    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线  B 木箱  P 压力板")
     for line in render_board(level, adv):
         lines.append(line)
     if adv:
@@ -598,6 +712,10 @@ def describe(level, adv, minimum, computed_par):
                                          patrol["speed"])
                            for patrol in adv.get("patrols") or [])
         lines.append("    巡逻：%s" % (patrols or "无"))
+        boxes = "、".join("(%d,%d)" % cell for cell in adv.get("boxes") or [])
+        plates = "、".join("(%d,%d)" % cell for cell in adv.get("plates") or [])
+        if boxes or plates:
+            lines.append("    推箱：木箱 %s   压力板 %s" % (boxes or "无", plates or "无"))
     return lines
 
 
@@ -635,6 +753,17 @@ def validate(data, verbose=True):
         if adv and adv["start"] is not None:
             walkable = walkable_cells(adv["obstacles"])
             reached = reachable(adv["start"], walkable)
+            boxes = adv.get("boxes") or []
+            if boxes:
+                # 有木箱时不能按「静态障碍」算可达性：木箱是可移动的，
+                # 要把 (主角格, 箱子格) 作为状态搜一遍才知道哪些格真的能站上去。
+                box_blockers = (set(as_cell(cell) for cell in adv["chests_cells"])
+                                | {as_cell(cell) for _, cell in adv["items"]})
+                states = box_push_states(adv["start"], boxes, walkable, box_blockers)
+                reached = {state[0] for state in states}
+                for plate in adv.get("plates") or []:
+                    if not any(plate in state[1] for state in states):
+                        level_errors.append("木箱推不到压力板 (%d,%d)" % plate)
             solution = level.get("solution") or []
             targets = [(r, solution[r]) for r in range(SIZE) if r < len(solution)]
             missing = [cell for cell in targets if cell not in reached]

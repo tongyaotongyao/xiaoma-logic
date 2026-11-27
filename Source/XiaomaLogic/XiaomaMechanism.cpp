@@ -122,12 +122,22 @@ void AXiaomaChest::SetupChest(const FXiaomaChestDef& InDef, const FVector& World
     {
         BuildSteleVisuals();
     }
+    else if (Def.PuzzleType == EXiaomaChestPuzzleType::Push)
+    {
+        BuildPushVisuals();
+    }
 
     RefreshVisuals();
 }
 
 void AXiaomaChest::OnBoardChanged(const FXiaomaLevel& Level, const TArray<uint8>& Cells)
 {
+    // 只有规则开箱看棋盘；符文、石碑、推箱各有自己的触发路径。
+    // 少了这道判断，推箱宝箱会拿默认的 RuleType 去套行规则，摆对某一行就自己开了。
+    if (Def.PuzzleType != EXiaomaChestPuzzleType::Rule)
+    {
+        return;
+    }
     if (bClaimed || Cells.Num() != FXiaomaPuzzle::CellCount)
     {
         return;
@@ -346,6 +356,49 @@ void AXiaomaChest::BuildSteleVisuals()
     DigMaterial = MarkerMaterial;
 }
 
+void AXiaomaChest::BuildPushVisuals()
+{
+    UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr,
+        TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+    if (!Cylinder || !Cube || !BaseMat || !SceneRoot || Def.PushPlate.X < 0)
+    {
+        return;
+    }
+
+    // 压力板画在宝箱 Actor 下、按格差偏移，所以箱子推动时它不会跟着跑。
+    // 高度必须踩在地板顶面上：地板顶面约在 z = 8（小马就摆在 z = 10），
+    // 原先画在 z = 2、厚 4 个单位，整块埋在地板里，玩家根本看不到。
+    const FVector Offset = OffsetFromChest(Def.PushPlate);
+    UMaterialInstanceDynamic* PadMaterial = nullptr;
+    UMaterialInstanceDynamic* GlowMaterial = nullptr;
+
+    // 底盘：一块厚圆饼，压住时整块由冷灰转暖色
+    PlatePad = AddMeshPart(this, SceneRoot, TEXT("PlatePad"), Cylinder,
+        Offset + FVector(0.f, 0.f, 9.f), FVector(0.86f, 0.86f, 0.14f), FColor(92, 96, 104), &PadMaterial);
+
+    // 四角铆钉：让这一格一眼看出是机关，而不是地板的深色贴图
+    for (int32 Index = 0; Index < 4; ++Index)
+    {
+        const float SignX = (Index & 1) ? 1.f : -1.f;
+        const float SignY = (Index & 2) ? 1.f : -1.f;
+        AddMeshPart(this, SceneRoot, TEXT("PlateBolt"), Cube,
+            Offset + FVector(SignX * 24.f, SignY * 24.f, 16.f),
+            FVector(0.06f, 0.06f, 0.06f), FColor(58, 62, 70), nullptr);
+    }
+
+    // 中央指示片：没压住是暗铜色，压住后变亮，兼作「箱子该推到哪儿」的目标点
+    PlateGlow = AddMeshPart(this, SceneRoot, TEXT("PlateGlow"), Cylinder,
+        Offset + FVector(0.f, 0.f, 16.6f), FVector(0.52f, 0.52f, 0.04f), FColor(96, 78, 46), &GlowMaterial);
+
+    PlateMaterial = PadMaterial;
+    PlateGlowMaterial = GlowMaterial;
+    if (PlatePad) PlatePad->SetCastShadow(true);
+    if (PlateGlow) PlateGlow->SetCastShadow(false);
+    SetPlatePressed(false);
+}
+
 void AXiaomaChest::RefreshRuneVisuals()
 {
     if (Def.PuzzleType != EXiaomaChestPuzzleType::Runes)
@@ -404,9 +457,44 @@ FString AXiaomaChest::BuildPrompt() const
         }
         return TEXT("宝箱埋在土里：先去场上的石碑按 E 读线索");
     }
+    if (Def.PuzzleType == EXiaomaChestPuzzleType::Push)
+    {
+        if (bUnlocked)
+        {
+            return TEXT("木箱压住了压力板，按 E 领取提示星");
+        }
+        return TEXT("推箱宝箱：把场上的木箱推到铁制压力板上，宝箱就会弹开");
+    }
     const TCHAR* RuleText = Def.RuleType == EXiaomaChestRuleType::Row ? TEXT("对应行")
         : (Def.RuleType == EXiaomaChestRuleType::Column ? TEXT("对应列") : TEXT("对应颜色区域"));
     return FString::Printf(TEXT("宝箱上锁中：在%s第 %d 格放对小马即可开启"), RuleText, Def.RuleIndex + 1);
+}
+
+void AXiaomaChest::UnlockByMechanism()
+{
+    if (bUnlocked || bClaimed)
+    {
+        return;
+    }
+    bUnlocked = true;
+    RefreshVisuals();
+}
+
+void AXiaomaChest::SetPlatePressed(bool bPressed)
+{
+    bPlatePressed = bPressed;
+    if (PlateMaterial)
+    {
+        // 压住时铁盘变暖色，没压住是冷灰
+        PlateMaterial->SetVectorParameterValue(TEXT("Color"),
+            bPressed ? FLinearColor(FColor(226, 182, 92)) : FLinearColor(FColor(92, 96, 104)));
+    }
+    if (PlateGlowMaterial)
+    {
+        // 中央指示片常亮，只有暗/亮两档：不压住时也要能看见压力板在哪
+        PlateGlowMaterial->SetVectorParameterValue(TEXT("Color"),
+            bPressed ? FLinearColor(FColor(255, 214, 96)) : FLinearColor(FColor(96, 78, 46)));
+    }
 }
 
 void AXiaomaChest::TryClaim()
@@ -570,4 +658,117 @@ void AXiaomaObstacle::SetupObstacle(const FIntPoint& InCell, const FVector& Worl
     TrimMesh->SetMaterial(0, TrimMaterial);
     MainMesh->SetCastShadow(true);
     TrimMesh->SetCastShadow(true);
+}
+
+AXiaomaPushBox::AXiaomaPushBox()
+{
+    PrimaryActorTick.bCanEverTick = true;
+    SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+    RootComponent = SceneRoot;
+
+    BodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BodyMesh"));
+    BodyMesh->SetupAttachment(SceneRoot);
+    BodyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    TopMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TopMesh"));
+    TopMesh->SetupAttachment(SceneRoot);
+    TopMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void AXiaomaPushBox::SetupBox(const FIntPoint& InCell, const FVector& WorldLocation)
+{
+    StartCell = InCell;
+    SnapToCell(InCell, WorldLocation);
+
+    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr,
+        TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+    if (!Cube || !BaseMat)
+    {
+        return;
+    }
+
+    // 边长 100 的立方体缩到 0.78 格宽、0.62 格高，底面正好贴在地板上
+    BodyMesh->SetStaticMesh(Cube);
+    BodyMesh->SetRelativeLocation(FVector(0.f, 0.f, 31.f));
+    BodyMesh->SetRelativeScale3D(FVector(0.78f, 0.78f, 0.62f));
+
+    TopMesh->SetStaticMesh(Cube);
+    TopMesh->SetRelativeLocation(FVector(0.f, 0.f, 60.f));
+    TopMesh->SetRelativeScale3D(FVector(0.84f, 0.84f, 0.08f));
+
+    BodyMaterial = UMaterialInstanceDynamic::Create(BaseMat, this);
+    BodyMaterial->SetVectorParameterValue(TEXT("Color"), FLinearColor(FColor(154, 110, 66)));
+    BodyMesh->SetMaterial(0, BodyMaterial);
+
+    TopMaterial = UMaterialInstanceDynamic::Create(BaseMat, this);
+    TopMaterial->SetVectorParameterValue(TEXT("Color"), FLinearColor(FColor(112, 78, 46)));
+    TopMesh->SetMaterial(0, TopMaterial);
+
+    BodyMesh->SetCastShadow(true);
+    TopMesh->SetCastShadow(true);
+}
+
+void AXiaomaPushBox::SnapToCell(const FIntPoint& InCell, const FVector& WorldLocation)
+{
+    BoxCell = InCell;
+    SlideTarget = WorldLocation;
+    bSliding = false;
+    SetActorLocation(WorldLocation);
+}
+
+void AXiaomaPushBox::MoveToCell(const FIntPoint& InCell, const FVector& WorldLocation)
+{
+    BoxCell = InCell;
+    SlideTarget = WorldLocation;
+    bSliding = true;
+}
+
+void AXiaomaPushBox::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    if (!bSliding)
+    {
+        return;
+    }
+    const FVector Current = GetActorLocation();
+    const FVector Next = FMath::VInterpTo(Current, SlideTarget, DeltaSeconds, 22.f);
+    SetActorLocation(Next);
+    if (FVector::DistSquared(Next, SlideTarget) < 1.f)
+    {
+        SetActorLocation(SlideTarget);
+        bSliding = false;
+    }
+}
+
+void AXiaomaPushBox::SaveState(TArray<uint8>& Out) const
+{
+    Out.Reset();
+    if (BoxCell.X < 0 || BoxCell.Y < 0)
+    {
+        Out.Add(255);
+        return;
+    }
+    Out.Add(static_cast<uint8>(BoxCell.X * FXiaomaPuzzle::Size + BoxCell.Y));
+}
+
+void AXiaomaPushBox::LoadState(const TArray<uint8>& In)
+{
+    if (In.Num() < 1 || In[0] >= FXiaomaPuzzle::CellCount)
+    {
+        return;
+    }
+    const int32 Index = In[0];
+    const FIntPoint Cell(Index / FXiaomaPuzzle::Size, Index % FXiaomaPuzzle::Size);
+    if (Cell == BoxCell)
+    {
+        return;
+    }
+    // 箱子自己不知道棋盘，用初始格与初始世界坐标推当前格的世界坐标：
+    // 列号加一 X 减一格、行号加一 Y 减一格，与棋盘完全一致。
+    const FVector World = SlideTarget + FVector(
+        (BoxCell.Y - Cell.Y) * MechCellStep,
+        (BoxCell.X - Cell.X) * MechCellStep,
+        0.f);
+    SnapToCell(Cell, World);
 }

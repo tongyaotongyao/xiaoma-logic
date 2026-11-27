@@ -15,6 +15,17 @@ constexpr float CellStep = 112.f;
 constexpr float BoardMinXY = -36.f;
 constexpr float BoardMaxXY = 5.f * CellStep + 36.f;
 constexpr float HerdsmanPlaneZ = 52.f;
+
+/**
+ * 世界轴输入 → 格子增量。
+ * 棋盘映射是「列号每加一世界 X 减一格、行号每加一世界 Y 减一格」，
+ * 所以沿世界 +X 走等于列号 -1、沿世界 +Y 走等于行号 -1。
+ * 这两个轴很容易写反（写反后箱子会朝左手的垂直方向跑），集中在这里换算。
+ */
+FIntPoint WorldAxisToCellDelta(int32 WorldX, int32 WorldY)
+{
+    return FIntPoint(-WorldY, -WorldX);
+}
 }
 
 AXiaomaHerdsman::AXiaomaHerdsman()
@@ -98,6 +109,20 @@ FVector AXiaomaHerdsman::CellToWorld(FIntPoint Cell)
 bool AXiaomaHerdsman::IsBlockedAt(const FVector& Location) const
 {
     return CellBlocked ? CellBlocked(WorldToRawCell(Location)) : false;
+}
+
+bool AXiaomaHerdsman::CanEnterOrPush(const FVector& TargetLocation, FIntPoint StepDelta)
+{
+    if (!IsBlockedAt(TargetLocation))
+    {
+        return true;
+    }
+    // 挡路的如果是木箱，问 GameMode 能不能推开；推开了这一帧就照常前进
+    if (!CellPush.IsBound() || (StepDelta.X == 0 && StepDelta.Y == 0))
+    {
+        return false;
+    }
+    return CellPush.Execute(WorldToRawCell(TargetLocation), StepDelta);
 }
 
 FIntPoint AXiaomaHerdsman::WorldToRawCell(const FVector& Location)
@@ -200,13 +225,15 @@ void AXiaomaHerdsman::Tick(float DeltaSeconds)
         FVector Next = Loc;
 
         // 分轴推进：某一轴被机关挡住时，另一轴仍可沿墙滑行
+        const int32 StepX = FMath::RoundToInt(FMath::Sign(Dir.X));
+        const int32 StepY = FMath::RoundToInt(FMath::Sign(Dir.Y));
         const FVector TryX(Loc.X + Dir.X * Speed * DeltaSeconds, Loc.Y, HerdsmanPlaneZ);
-        if (!IsBlockedAt(TryX))
+        if (CanEnterOrPush(TryX, WorldAxisToCellDelta(StepX, 0)))
         {
             Next.X = FMath::Clamp(TryX.X, BoardMinXY, BoardMaxXY);
         }
         const FVector TryY(Next.X, Loc.Y + Dir.Y * Speed * DeltaSeconds, HerdsmanPlaneZ);
-        if (!IsBlockedAt(TryY))
+        if (CanEnterOrPush(TryY, WorldAxisToCellDelta(0, StepY)))
         {
             Next.Y = FMath::Clamp(TryY.Y, BoardMinXY, BoardMaxXY);
         }

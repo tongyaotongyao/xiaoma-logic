@@ -199,6 +199,48 @@ class ValidatorGuardTests(unittest.TestCase):
         _, errors, _ = va.validate(broken)
         self.assertTrue(any("speed" in message for message in errors), errors)
 
+    def test_box_on_solution_cell_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][12]
+        level["adventure"]["boxes"] = [{"cell": [0, level["solution"][0]]}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("正解格" in message for message in errors), errors)
+
+    def test_push_chest_without_box_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        broken["levels"][12]["adventure"]["boxes"] = []
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("却没有任何木箱" in message for message in errors), errors)
+
+    def test_push_puzzle_must_not_carry_box_field(self):
+        broken = copy.deepcopy(DATA)
+        puzzle = broken["levels"][12]["adventure"]["chests"][0]["puzzle"]
+        puzzle["box"] = [2, 3]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("不再使用 box 字段" in message for message in errors), errors)
+
+
+class BoxPushTests(unittest.TestCase):
+    """推箱状态搜索：木箱整格推，推不进障碍、别的箱子和棋盘外。"""
+
+    ALL_CELLS = {(row, col) for row in range(va.SIZE) for col in range(va.SIZE)}
+
+    def test_box_can_be_pushed_along_an_open_row(self):
+        states = va.box_push_states((0, 0), [(0, 1)], self.ALL_CELLS, set())
+        self.assertTrue(any((0, 5) in state[1] for state in states), "木箱应能沿整行推到最右")
+
+    def test_box_cannot_leave_the_board(self):
+        walkable = {(row, 0) for row in range(va.SIZE)}
+        states = va.box_push_states((5, 0), [(3, 0)], walkable, set())
+        rows = {cell[0] for state in states for cell in state[1]}
+        self.assertEqual(rows, {0, 1, 2, 3})
+
+    def test_box_stops_at_an_obstacle(self):
+        walkable = self.ALL_CELLS - {(1, 0)}
+        states = va.box_push_states((5, 0), [(2, 0)], walkable, set())
+        cells = {cell for state in states for cell in state[1]}
+        self.assertNotIn((0, 0), cells, "障碍后面的格子木箱过不去")
+
 
 class PuzzlePacingTests(unittest.TestCase):
     """第 3~10 关该出现哪种开箱谜题，节奏表别被后面的改动冲掉。"""
@@ -232,6 +274,21 @@ class PuzzlePacingTests(unittest.TestCase):
             self.assertFalse(adventure(level).get("patrols"), level["id"])
         for level in DATA["levels"][10:15]:
             self.assertTrue(adventure(level).get("patrols"), level["id"])
+
+    def test_push_starts_at_level_thirteen(self):
+        for level in DATA["levels"][:12]:
+            self.assertNotIn("push", self.puzzle_types(level), level["id"])
+            self.assertFalse(adventure(level).get("boxes"), level["id"])
+        self.assertIn("push", self.puzzle_types(DATA["levels"][12]), 13)
+        self.assertTrue(adventure(DATA["levels"][12]).get("boxes"), 13)
+
+    def test_boxes_only_where_a_plate_exists(self):
+        for level in DATA["levels"]:
+            boxes = adventure(level).get("boxes") or []
+            plates = [chest["puzzle"].get("plate")
+                      for chest in adventure(level).get("chests") or []
+                      if chest.get("puzzle", {}).get("type") == "push"]
+            self.assertEqual(bool(boxes), bool(plates), level["id"])
 
     def test_patrol_ends_stay_off_solution_cells(self):
         for level in DATA["levels"]:

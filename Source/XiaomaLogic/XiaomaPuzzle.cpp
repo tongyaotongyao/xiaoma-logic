@@ -285,6 +285,15 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                             {
                                 Def.SteleAnswer = AnswerCell;
                             }
+
+                            // 推箱压力板
+                            const TArray<TSharedPtr<FJsonValue>>* PlateArr = nullptr;
+                            FIntPoint PlateCell;
+                            if (Puzzle->TryGetArrayField(TEXT("plate"), PlateArr) && PlateArr
+                                && ParseIntPoint(*PlateArr, PlateCell))
+                            {
+                                Def.PushPlate = PlateCell;
+                            }
                         }
                         Level.Adventure.Chests.Add(Def);
                     }
@@ -303,6 +312,30 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                         && ParseIntPoint(*ObstacleCellArr, ObstacleCell))
                     {
                         Level.Adventure.Obstacles.Add(ObstacleCell);
+                    }
+                }
+            }
+
+            // 推箱木箱
+            const TArray<TSharedPtr<FJsonValue>>* BoxesArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("boxes"), BoxesArr) && BoxesArr)
+            {
+                for (const TSharedPtr<FJsonValue>& BoxVal : *BoxesArr)
+                {
+                    const TSharedPtr<FJsonObject> BoxObj = BoxVal->AsObject();
+                    if (!BoxObj.IsValid()) continue;
+                    const TArray<TSharedPtr<FJsonValue>>* BoxCellArr = nullptr;
+                    FIntPoint BoxCell;
+                    if (BoxObj->TryGetArrayField(TEXT("cell"), BoxCellArr) && BoxCellArr
+                        && ParseIntPoint(*BoxCellArr, BoxCell))
+                    {
+                        FXiaomaBoxDef Def;
+                        Def.Cell = BoxCell;
+                        Level.Adventure.Boxes.Add(Def);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: box has no valid cell, ignored"), Level.Id);
                     }
                 }
             }
@@ -529,6 +562,8 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
         Mix(Chest.SteleCell.Y);
         Mix(Chest.SteleAnswer.X);
         Mix(Chest.SteleAnswer.Y);
+        Mix(Chest.PushPlate.X);
+        Mix(Chest.PushPlate.Y);
     }
 
     Mix(Level.Adventure.Items.Num());
@@ -550,6 +585,14 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
             Mix(Cell.Y);
         }
         Mix(FMath::RoundToInt(Patrol.Speed * 100.f));
+    }
+
+    // 木箱的初始格同样会被按索引写进撤销快照，改位置就得让旧续局失效
+    Mix(Level.Adventure.Boxes.Num());
+    for (const FXiaomaBoxDef& Box : Level.Adventure.Boxes)
+    {
+        Mix(Box.Cell.X);
+        Mix(Box.Cell.Y);
     }
 
     return static_cast<int32>(Hash & 0x7fffffffu);

@@ -325,6 +325,8 @@ void AXiaomaGameMode::RestoreActiveRound(const FXiaomaLevel& Level)
             Mechanisms[Index]->LoadState(States[Index]);
         }
     }
+    // 木箱位置是从存档读回来的，压力板视觉按它重算一遍
+    RefreshPushPlates(false);
 }
 
 void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
@@ -621,6 +623,16 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Mechanisms.Add(Chest);
         }
     }
+    // 木箱排在宝箱之后：撤销/读档按 Mechanisms 下标配位，顺序必须与存档一致
+    for (const FXiaomaBoxDef& BoxDef : Level->Adventure.Boxes)
+    {
+        AXiaomaPushBox* Box = GetWorld()->SpawnActor<AXiaomaPushBox>(AXiaomaPushBox::StaticClass());
+        if (Box)
+        {
+            Box->SetupBox(BoxDef.Cell, Board->GetCellWorldLocation(BoxDef.Cell));
+            Mechanisms.Add(Box);
+        }
+    }
     for (const FXiaomaItemDef& ItemDef : Level->Adventure.Items)
     {
         AXiaomaPickup* Pickup = GetWorld()->SpawnActor<AXiaomaPickup>(AXiaomaPickup::StaticClass());
@@ -644,6 +656,7 @@ void AXiaomaGameMode::SpawnAdventureActors()
         }
     }
     NotifyMechanismsBoardChanged();
+    RefreshPushPlates(false);
 }
 
 void AXiaomaGameMode::StartLevel(int32 LevelNumber)
@@ -695,6 +708,8 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     if (Herdsman)
     {
         Herdsman->SetCellBlockedPredicate([this](FIntPoint Cell) { return IsCellBlocked(Cell); });
+        Herdsman->SetCellPushHandler(FXiaomaHerdsmanPushDelegate::CreateUObject(
+            this, &AXiaomaGameMode::TryPushBoxAtCell));
         Herdsman->TeleportToCell(SpawnCell);
         if (Board)
         {
@@ -1136,6 +1151,116 @@ void AXiaomaGameMode::OnPatrollerHitHerdsman(AXiaomaPatroller* Patroller)
     LoseLife(TEXT("被捣蛋鬼撞到了，弹回起点并失去一条生命"));
 }
 
+bool AXiaomaGameMode::CanBoxEnter(FIntPoint Cell, const AXiaomaMechanism* IgnoredBox) const
+{
+    if (Cell.X < 0 || Cell.X >= FXiaomaPuzzle::Size || Cell.Y < 0 || Cell.Y >= FXiaomaPuzzle::Size)
+    {
+        return false;
+    }
+    // 宝箱和石碑本身不阻挡走人，但木箱压上去会盖住它们，得单独排掉
+    if (const FXiaomaLevel* Level = GetCurrentLevel())
+    {
+        for (const FXiaomaChestDef& Chest : Level->Adventure.Chests)
+        {
+            if (Chest.Cell == Cell || Chest.SteleCell == Cell)
+            {
+                return false;
+            }
+        }
+    }
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (Mech && Mech != IgnoredBox && Mech->BlocksCell(Cell))
+        {
+            return false;
+        }
+    }
+    // 没捡的道具被压住就再也拿不到了，直接不许推过去
+    for (const AXiaomaPickup* Pickup : Pickups)
+    {
+        if (Pickup && !Pickup->IsCollected() && Pickup->GetCell() == Cell)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool AXiaomaGameMode::TryPushBoxAtCell(FIntPoint BoxCell, FIntPoint StepDelta)
+{
+    if (Screen != EXiaomaScreen::Playing || !Board)
+    {
+        return false;
+    }
+    AXiaomaPushBox* Box = nullptr;
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        AXiaomaPushBox* Candidate = Cast<AXiaomaPushBox>(Mech);
+        if (Candidate && Candidate->GetCell() == BoxCell)
+        {
+            Box = Candidate;
+            break;
+        }
+    }
+    if (!Box)
+    {
+        return false;
+    }
+    const FIntPoint Target = BoxCell + StepDelta;
+    if (!CanBoxEnter(Target, Box))
+    {
+        return false;
+    }
+    // 推箱会改机关状态，先压快照：此时主角还在箱子后面，撤销能完整回到推之前
+    PushUndoSnapshot();
+    Box->MoveToCell(Target, Board->GetCellWorldLocation(Target));
+    PlayFeedback(TEXT("Place"));
+    RefreshPushPlates(true);
+    bRoundDirty = true;
+    if (GameWidget) GameWidget->Refresh();
+    return true;
+}
+
+void AXiaomaGameMode::RefreshPushPlates(bool bAnnounce)
+{
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    if (!Level)
+    {
+        return;
+    }
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech);
+        if (!Chest || Chest->GetDef().PuzzleType != EXiaomaChestPuzzleType::Push)
+        {
+            continue;
+        }
+        const FIntPoint Plate = Chest->GetDef().PushPlate;
+        bool bPressed = false;
+        for (const AXiaomaMechanism* Other : Mechanisms)
+        {
+            const AXiaomaPushBox* Box = Cast<AXiaomaPushBox>(Other);
+            if (Box && Box->GetCell() == Plate)
+            {
+                bPressed = true;
+                break;
+            }
+        }
+        Chest->SetPlatePressed(bPressed);
+        const bool bWasLocked = !Chest->IsUnlocked() && !Chest->IsClaimed();
+        if (bPressed && bWasLocked)
+        {
+            // 一次性锁存：之后把箱子推走也不会重新上锁
+            Chest->UnlockByMechanism();
+            if (bAnnounce)
+            {
+                PlayFeedback(TEXT("Win"));
+                StatusMessage = TEXT("木箱压上了压力板，宝箱弹开了——走过去按 E 领取");
+            }
+        }
+    }
+}
+
 void AXiaomaGameMode::LoseLife(const FString& Reason)
 {
     if (!Progress)
@@ -1200,6 +1325,8 @@ void AXiaomaGameMode::Undo()
     }
     // Cells 被整体换掉了，捣蛋鬼缓存的标记格也要跟着更新
     NotifyMechanismsBoardChanged();
+    // 木箱可能被撤回到压力板之外，压力板视觉要跟着回去
+    RefreshPushPlates(false);
     StatusMessage = TEXT("已撤销上一步");
     RefreshBoardAndUI();
     SaveProgress();

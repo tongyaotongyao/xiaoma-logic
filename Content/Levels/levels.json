@@ -1507,9 +1507,11 @@
             ],
             "reward": "hint",
             "puzzle": {
-              "type": "rule",
-              "target": "row",
-              "index": 0
+              "type": "push",
+              "plate": [
+                0,
+                3
+              ]
             }
           }
         ],
@@ -1542,6 +1544,14 @@
               ]
             ],
             "speed": 1.5
+          }
+        ],
+        "boxes": [
+          {
+            "cell": [
+              2,
+              3
+            ]
           }
         ]
       }
@@ -1789,9 +1799,11 @@
             ],
             "reward": "hint",
             "puzzle": {
-              "type": "rule",
-              "target": "row",
-              "index": 0
+              "type": "push",
+              "plate": [
+                4,
+                0
+              ]
             }
           }
         ],
@@ -1829,6 +1841,14 @@
               ]
             ],
             "speed": 1.4
+          }
+        ],
+        "boxes": [
+          {
+            "cell": [
+              4,
+              3
+            ]
           }
         ]
       }
