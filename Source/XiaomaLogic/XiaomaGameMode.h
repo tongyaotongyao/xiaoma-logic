@@ -154,6 +154,8 @@ private:
     void OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FString& OutMessage);
     void OnChestNotice(const FString& Message, bool bPositive);
     void OnPickupCollected(EXiaomaItemType ItemType, FIntPoint Cell);
+    /** 巡逻捣蛋鬼撞到主角：扣 1 命并弹回本关起点 */
+    void OnPatrollerHitHerdsman(class AXiaomaPatroller* Patroller);
     void GrantItemReward(EXiaomaItemType ItemType, const TCHAR* SourceLabel);
     void NotifyMechanismsBoardChanged();
     void LoseLife(const FString& Reason);

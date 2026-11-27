@@ -4,6 +4,7 @@
 #include "XiaomaHerdsman.h"
 #include "XiaomaHUDWidget.h"
 #include "XiaomaMechanism.h"
+#include "XiaomaPatroller.h"
 #include "XiaomaPickup.h"
 #include "XiaomaPlayerController.h"
 #include "XiaomaSaveGame.h"
@@ -350,6 +351,15 @@ void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
         Herdsman->SetMovementEnabled(bPlaying);
     }
 
+    // 暂停、菜单、结算时捣蛋鬼也停住，否则会在暂停界面里继续走动甚至撞人
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (AXiaomaPatroller* Patroller = Cast<AXiaomaPatroller>(Mech))
+        {
+            Patroller->SetPatrolEnabled(bPlaying);
+        }
+    }
+
     APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
     if (Controller)
     {
@@ -620,6 +630,17 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Pickup->SetOnCollected(FXiaomaPickupCollectedDelegate::CreateUObject(
                 this, &AXiaomaGameMode::OnPickupCollected));
             Pickups.Add(Pickup);
+        }
+    }
+    for (const FXiaomaPatrolDef& PatrolDef : Level->Adventure.Patrols)
+    {
+        AXiaomaPatroller* Patroller = GetWorld()->SpawnActor<AXiaomaPatroller>(AXiaomaPatroller::StaticClass());
+        if (Patroller)
+        {
+            Patroller->SetupPatroller(PatrolDef, Board, Herdsman);
+            Patroller->SetOnHitHerdsman(FXiaomaPatrollerHitDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnPatrollerHitHerdsman));
+            Mechanisms.Add(Patroller);
         }
     }
     NotifyMechanismsBoardChanged();
@@ -972,6 +993,8 @@ void AXiaomaGameMode::ToggleMarkAtCurrentCell()
     PushUndoSnapshot();
     Cells[Idx] = Cells[Idx] == 1 ? 0 : 1;
     StatusMessage = Cells[Idx] == 1 ? TEXT("已放置 X 排除标记") : TEXT("已清除 X 排除标记");
+    // 捣蛋鬼要立刻知道标记变了：X 对它是路障
+    NotifyMechanismsBoardChanged();
     RefreshBoardAndUI();
     SaveProgress();
 }
@@ -1097,6 +1120,22 @@ void AXiaomaGameMode::OnPickupCollected(EXiaomaItemType ItemType, FIntPoint Cell
     GrantItemReward(ItemType, TEXT("拾取道具"));
 }
 
+void AXiaomaGameMode::OnPatrollerHitHerdsman(AXiaomaPatroller* Patroller)
+{
+    if (Screen != EXiaomaScreen::Playing || !Herdsman)
+    {
+        return;
+    }
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    if (!Level)
+    {
+        return;
+    }
+    // 先弹回起点再扣命：LoseLife 会立即落盘，存档里记的应该是弹回之后的位置
+    Herdsman->TeleportToCell(Level->Adventure.StartCell);
+    LoseLife(TEXT("被捣蛋鬼撞到了，弹回起点并失去一条生命"));
+}
+
 void AXiaomaGameMode::LoseLife(const FString& Reason)
 {
     if (!Progress)
@@ -1159,6 +1198,8 @@ void AXiaomaGameMode::Undo()
     {
         if (Mechanisms[I]) Mechanisms[I]->LoadState(Snap.MechanismStates[I]);
     }
+    // Cells 被整体换掉了，捣蛋鬼缓存的标记格也要跟着更新
+    NotifyMechanismsBoardChanged();
     StatusMessage = TEXT("已撤销上一步");
     RefreshBoardAndUI();
     SaveProgress();

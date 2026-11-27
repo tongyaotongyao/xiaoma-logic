@@ -55,6 +55,13 @@ struct FXiaomaChestDef
     FIntPoint SteleAnswer = FIntPoint(-1, -1);
 };
 
+/** 巡逻捣蛋鬼：沿 Path 的格子中心匀速往返，Speed 单位为格/秒 */
+struct FXiaomaPatrolDef
+{
+    TArray<FIntPoint> Path;
+    float Speed = 1.5f;
+};
+
 /** 关卡中的冒险模式扩展数据 */
 struct FXiaomaAdventureData
 {
@@ -65,6 +72,8 @@ struct FXiaomaAdventureData
     TArray<FXiaomaChestDef> Chests;
     /** 静态障碍：占据整格，主角不能进入，也不能召唤小马 */
     TArray<FIntPoint> Obstacles;
+    /** 巡逻捣蛋鬼：撞到主角扣 1 命，遇到 X 标记掉头 */
+    TArray<FXiaomaPatrolDef> Patrols;
 };
 
 struct FXiaomaLevel

@@ -36,7 +36,7 @@ LEVELS_PATH = ROOT / "Content" / "Levels" / "levels.json"
 ITEM_TYPES = ("hint", "apple", "carrot", "clover")
 ITEM_SYMBOL = {"hint": "h", "apple": "a", "carrot": "c", "clover": "f"}
 PUZZLE_TYPES = ("rule", "runes", "stele", "push")
-UNIMPLEMENTED_KEYS = ("ice", "bridges", "gates", "patrols", "steles", "boxes")
+UNIMPLEMENTED_KEYS = ("ice", "bridges", "gates", "steles", "boxes")
 
 
 def load_levels(path=LEVELS_PATH):
@@ -167,7 +167,7 @@ def check_adventure(level, errors, warnings):
         errors.append("缺少 adventure 字段")
         return None
 
-    out = {"items": [], "chests": [], "obstacles": [], "chests_cells": set()}
+    out = {"items": [], "chests": [], "obstacles": [], "chests_cells": set(), "patrols": []}
 
     start = parse_cell(adv.get("start"), "adventure.start", errors)
     out["start"] = start
@@ -260,6 +260,41 @@ def check_adventure(level, errors, warnings):
     for cell in out["chests_cells"]:
         if cell in obstacle_set:
             errors.append("宝箱与障碍同格 (%d,%d)" % cell)
+
+    # 巡逻捣蛋鬼：路线逐格相邻，停留端点不能压在正解格上（策划案 4 节）
+    patrols = adv.get("patrols") or []
+    if not isinstance(patrols, list):
+        errors.append("adventure.patrols 应为数组")
+        patrols = []
+    for index, patrol in enumerate(patrols):
+        where = "adventure.patrols[%d]" % index
+        if not isinstance(patrol, dict):
+            errors.append("%s 应为对象" % where)
+            continue
+        path = parse_cell_list(patrol.get("path"), where + ".path", errors)
+        if len(path) < 2:
+            errors.append("%s.path 至少要 2 个格子（要能来回走），实际 %d 个"
+                          % (where, len(path)))
+            continue
+        speed = patrol.get("speed", 1.5)
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.2 <= speed <= 8:
+            errors.append("%s.speed 应在 0.2~8 之间（单位：格/秒），实际为 %r" % (where, speed))
+        for step in range(len(path) - 1):
+            here, there = path[step], path[step + 1]
+            if abs(here[0] - there[0]) + abs(here[1] - there[1]) != 1:
+                errors.append("%s.path 第 %d 段 %r -> %r 不相邻，只能上下左右走一格"
+                              % (where, step, here, there))
+        for cell in path:
+            if cell in obstacle_set:
+                errors.append("%s.path 经过障碍 %r，捣蛋鬼会被卡住" % (where, cell))
+        # 只检查两端的停留点：中途允许穿过正解格
+        for label, cell in (("起点", path[0]), ("终点", path[-1])):
+            if cell in solution_cells:
+                errors.append("%s.path %s %r 是正解格，捣蛋鬼会长时间压在那一格"
+                              % (where, label, cell))
+            if cell == out["start"]:
+                warnings.append("%s.path %s 与主角起点同格，一进关就会挨撞" % (where, label))
+        out["patrols"].append({"path": path, "speed": float(speed)})
 
     used = set()
     for key in UNIMPLEMENTED_KEYS:
@@ -485,6 +520,16 @@ def render_board(level, adv):
     chests = {as_cell(chest["cell"]): chest.get("puzzle") for chest in (adv["chests"] if adv else [])}
     items = {as_cell(cell): kind for kind, cell in (adv["items"] if adv else [])}
     obstacles = {as_cell(cell) for cell in (adv["obstacles"] if adv else [])}
+    patrol_ends = set()
+    patrol_paths = set()
+    for patrol in (adv.get("patrols") or [] if adv else []):
+        # 既接受 check_adventure 归一化后的 (row, col)，也接受 JSON 里的 [row, col]
+        path = [as_cell(cell) for cell in patrol.get("path") or []]
+        path = [cell for cell in path if cell is not None]
+        if not path:
+            continue
+        patrol_ends.update({path[0], path[-1]})
+        patrol_paths.update(path)
     start = as_cell(adv["start"]) if adv else None
 
     rune_cells = set()
@@ -521,6 +566,10 @@ def render_board(level, adv):
                 symbol = "C"
             if cell in obstacles:
                 symbol = "#"
+            if cell in patrol_paths:
+                symbol = "o"
+            if cell in patrol_ends:
+                symbol = "p"
             if cell == start:
                 symbol = "S"
             symbol_line.append(symbol)
@@ -536,7 +585,7 @@ def describe(level, adv, minimum, computed_par):
                     "无法到达" if minimum is None else minimum,
                     "?" if computed_par is None else computed_par,
                     (level.get("adventure") or {}).get("par", "?")))
-    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑")
+    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线")
     for line in render_board(level, adv):
         lines.append(line)
     if adv:
@@ -545,6 +594,10 @@ def describe(level, adv, minimum, computed_par):
         chests = "、".join("%s@(%d,%d)" % (chest["puzzle"], chest["cell"][0], chest["cell"][1])
                           for chest in adv["chests"])
         lines.append("    宝箱：%s" % (chests or "无"))
+        patrols = "、".join("%s 速%.1f" % ("->".join("(%d,%d)" % c for c in patrol["path"]),
+                                         patrol["speed"])
+                           for patrol in adv.get("patrols") or [])
+        lines.append("    巡逻：%s" % (patrols or "无"))
     return lines
 
 

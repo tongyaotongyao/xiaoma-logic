@@ -160,6 +160,45 @@ class ValidatorGuardTests(unittest.TestCase):
         _, errors, _ = va.validate(broken)
         self.assertTrue(any("与障碍同格" in message for message in errors), errors)
 
+    def test_patrol_path_must_step_between_neighbours(self):
+        broken = copy.deepcopy(DATA)
+        broken["levels"][10]["adventure"]["patrols"] = [
+            {"path": [[5, 2], [5, 5]], "speed": 1.5}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("不相邻" in message for message in errors), errors)
+
+    def test_patrol_end_on_solution_cell_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][10]
+        solution_cell = [0, level["solution"][0]]
+        # 端点落在正解格上；中间补一格让路径本身合法
+        level["adventure"]["patrols"] = [
+            {"path": [solution_cell, [0, solution_cell[1] + 1]], "speed": 1.5}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("正解格" in message for message in errors), errors)
+
+    def test_patrol_through_obstacle_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][5]
+        obstacle = list(level["adventure"]["obstacles"][0])
+        neighbour = [obstacle[0], obstacle[1] + 1 if obstacle[1] < 5 else obstacle[1] - 1]
+        level["adventure"]["patrols"] = [{"path": [obstacle, neighbour], "speed": 1.5}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("经过障碍" in message for message in errors), errors)
+
+    def test_patrol_needs_two_cells(self):
+        broken = copy.deepcopy(DATA)
+        broken["levels"][10]["adventure"]["patrols"] = [{"path": [[5, 2]], "speed": 1.0}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("至少要 2 个格子" in message for message in errors), errors)
+
+    def test_patrol_speed_must_be_sane(self):
+        broken = copy.deepcopy(DATA)
+        broken["levels"][10]["adventure"]["patrols"] = [
+            {"path": [[5, 2], [5, 3]], "speed": 0}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("speed" in message for message in errors), errors)
+
 
 class PuzzlePacingTests(unittest.TestCase):
     """第 3~10 关该出现哪种开箱谜题，节奏表别被后面的改动冲掉。"""
@@ -187,6 +226,20 @@ class PuzzlePacingTests(unittest.TestCase):
         for level in DATA["levels"][:9]:
             self.assertLessEqual(len(adventure(level).get("chests") or []), 1, level["id"])
         self.assertEqual(len(adventure(DATA["levels"][9]).get("chests") or []), 2)
+
+    def test_patrols_start_at_level_eleven(self):
+        for level in DATA["levels"][:10]:
+            self.assertFalse(adventure(level).get("patrols"), level["id"])
+        for level in DATA["levels"][10:15]:
+            self.assertTrue(adventure(level).get("patrols"), level["id"])
+
+    def test_patrol_ends_stay_off_solution_cells(self):
+        for level in DATA["levels"]:
+            cells = solution_cells(level)
+            for index, patrol in enumerate(adventure(level).get("patrols") or []):
+                path = [va.as_cell(cell) for cell in patrol["path"]]
+                for end in (path[0], path[-1]):
+                    self.assertNotIn(end, cells, (level["id"], index))
 
 
 if __name__ == "__main__":

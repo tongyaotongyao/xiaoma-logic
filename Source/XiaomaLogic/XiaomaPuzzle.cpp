@@ -306,6 +306,47 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                     }
                 }
             }
+
+            // 巡逻捣蛋鬼
+            const TArray<TSharedPtr<FJsonValue>>* PatrolsArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("patrols"), PatrolsArr) && PatrolsArr)
+            {
+                for (const TSharedPtr<FJsonValue>& PatrolVal : *PatrolsArr)
+                {
+                    const TSharedPtr<FJsonObject> PatrolObj = PatrolVal->AsObject();
+                    if (!PatrolObj.IsValid()) continue;
+
+                    FXiaomaPatrolDef Def;
+                    const TArray<TSharedPtr<FJsonValue>>* PathArr = nullptr;
+                    if (PatrolObj->TryGetArrayField(TEXT("path"), PathArr) && PathArr)
+                    {
+                        for (const TSharedPtr<FJsonValue>& PathCellVal : *PathArr)
+                        {
+                            const TArray<TSharedPtr<FJsonValue>>* PathCellArr = nullptr;
+                            FIntPoint PathCell;
+                            if (PathCellVal->TryGetArray(PathCellArr) && PathCellArr
+                                && ParseIntPoint(*PathCellArr, PathCell))
+                            {
+                                Def.Path.Add(PathCell);
+                            }
+                        }
+                    }
+                    double SpeedValue = 0.0;
+                    if (PatrolObj->TryGetNumberField(TEXT("speed"), SpeedValue) && SpeedValue > 0.0)
+                    {
+                        Def.Speed = FMath::Clamp(static_cast<float>(SpeedValue), 0.2f, 8.f);
+                    }
+                    // 少于两个点走不出往返；坏数据只丢这一条，不连累整关
+                    if (Def.Path.Num() >= 2)
+                    {
+                        Level.Adventure.Patrols.Add(MoveTemp(Def));
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: patrol path needs at least 2 cells, ignored"), Level.Id);
+                    }
+                }
+            }
         }
         OutLevels.Add(MoveTemp(Level));
     }
@@ -496,6 +537,19 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
         Mix(static_cast<int32>(Item.Type));
         Mix(Item.Cell.X);
         Mix(Item.Cell.Y);
+    }
+
+    // 巡逻也会被按索引写进撤销快照，路线或速度一改就必须让旧续局失效
+    Mix(Level.Adventure.Patrols.Num());
+    for (const FXiaomaPatrolDef& Patrol : Level.Adventure.Patrols)
+    {
+        Mix(Patrol.Path.Num());
+        for (const FIntPoint& Cell : Patrol.Path)
+        {
+            Mix(Cell.X);
+            Mix(Cell.Y);
+        }
+        Mix(FMath::RoundToInt(Patrol.Speed * 100.f));
     }
 
     return static_cast<int32>(Hash & 0x7fffffffu);
