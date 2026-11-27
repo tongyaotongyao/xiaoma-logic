@@ -13,8 +13,14 @@ namespace
 {
 /** 撞人后短暂免疫，避免主角被弹回起点后又被同一只连扣 */
 constexpr float HitCooldownSeconds = 1.0f;
-/** 掉头时离开整点一点点，否则下一帧会再次判定同一格而抖动 */
-constexpr float TurnNudge = 0.02f;
+/**
+ * 可走区间的宽度下限（单位格）。
+ * 一个格被 X 封住后，剩下的空间可能只有半格——这种宽度下往返会变成原地打转，
+ * 看起来比停住更怪，所以直接判定为「无路可走」。
+ */
+constexpr float MinTravelSpan = 0.75f;
+/** 判断「某个 X 墙在当前位置的哪一侧」时的浮点容差 */
+constexpr float BoundaryEpsilon = 1e-3f;
 /** 6 色小马的配色里没有「坏家伙」，捣蛋鬼自己用一套深紫 */
 const FLinearColor PatrollerBodyColour(0.34f, 0.22f, 0.44f);
 const FLinearColor PatrollerHatColour(0.20f, 0.13f, 0.28f);
@@ -141,6 +147,7 @@ void AXiaomaPatroller::ResetToStart()
     TravelDistance = 0.f;
     MoveDirection = 1;
     HitCooldown = 0.f;
+    RecomputeBounds();
     UpdateTransform();
 }
 
@@ -170,23 +177,97 @@ void AXiaomaPatroller::UpdateTransform()
     }
 }
 
-bool AXiaomaPatroller::IsUpcomingCellMarked() const
+bool AXiaomaPatroller::IsMarked(int32 Index) const
 {
-    if (Def.Path.Num() < 2 || BoardCells.Num() != FXiaomaPuzzle::CellCount)
+    if (!Def.Path.IsValidIndex(Index) || BoardCells.Num() != FXiaomaPuzzle::CellCount)
     {
         return false;
     }
-    // 紧接着要踏入的那一格
-    const int32 Upcoming = MoveDirection > 0
-        ? FMath::CeilToInt(TravelDistance + KINDA_SMALL_NUMBER)
-        : FMath::FloorToInt(TravelDistance - KINDA_SMALL_NUMBER);
-    if (!Def.Path.IsValidIndex(Upcoming))
+    const FIntPoint Cell = Def.Path[Index];
+    const int32 CellIndex = Cell.X * FXiaomaPuzzle::Size + Cell.Y;
+    return BoardCells.IsValidIndex(CellIndex) && BoardCells[CellIndex] == 1;
+}
+
+void AXiaomaPatroller::RecomputeBounds()
+{
+    const int32 Last = Def.Path.Num() - 1;
+    MinTravel = 0.f;
+    MaxTravel = static_cast<float>(Last);
+    bStalled = false;
+
+    if (Last < 1)
     {
-        return false;
+        bStalled = true;
+        return;
     }
-    const FIntPoint Cell = Def.Path[Upcoming];
-    const int32 Index = Cell.X * FXiaomaPuzzle::Size + Cell.Y;
-    return BoardCells.IsValidIndex(Index) && BoardCells[Index] == 1;
+
+    // 被 X 标记的格整格不可进入，等价于「格心 ± 半格」这段行程是墙。
+    // 从当前位置向两侧各找最近的一道墙，它们之间的部分就是它能活动的范围。
+    // 注意不能用「每帧试探紧接着要踏入的那一格」：那种判定在端点附近会出现
+    // 「掉头后又马上撞回端点」的极限环，表现为每帧翻转一次的抽搐。
+    int32 LeftWall = INDEX_NONE;
+    int32 RightWall = INDEX_NONE;
+    for (int32 Index = 0; Index < Def.Path.Num(); ++Index)
+    {
+        if (!IsMarked(Index))
+        {
+            continue;
+        }
+        if (static_cast<float>(Index) + 0.5f <= TravelDistance + BoundaryEpsilon)
+        {
+            LeftWall = Index;
+        }
+        else if (RightWall == INDEX_NONE)
+        {
+            RightWall = Index;
+        }
+    }
+    if (LeftWall != INDEX_NONE)
+    {
+        MinTravel = static_cast<float>(LeftWall) + 0.5f;
+    }
+    if (RightWall != INDEX_NONE)
+    {
+        MaxTravel = static_cast<float>(RightWall) - 0.5f;
+    }
+
+    // X 正好落在脚下（撞人冷却期间玩家放的）：推回最近的可站位置
+    if (TravelDistance > MaxTravel)
+    {
+        TravelDistance = MaxTravel;
+    }
+    if (TravelDistance < MinTravel)
+    {
+        TravelDistance = MinTravel;
+    }
+
+    // 剩下的空间不足一格：往返只会变成原地打转，干脆停住
+    if (MaxTravel - MinTravel < MinTravelSpan)
+    {
+        bStalled = true;
+    }
+}
+
+void AXiaomaPatroller::Advance(float DeltaSeconds)
+{
+    if (bStalled)
+    {
+        return;
+    }
+    TravelDistance += MoveDirection * Def.Speed * DeltaSeconds;
+
+    // 撞到区间边界就折返：把越过的那一段折回来，位置不会钉在界上反复触发
+    if (TravelDistance >= MaxTravel)
+    {
+        TravelDistance = MaxTravel - (TravelDistance - MaxTravel);
+        MoveDirection = -1;
+    }
+    else if (TravelDistance <= MinTravel)
+    {
+        TravelDistance = MinTravel + (MinTravel - TravelDistance);
+        MoveDirection = 1;
+    }
+    TravelDistance = FMath::Clamp(TravelDistance, MinTravel, MaxTravel);
 }
 
 void AXiaomaPatroller::Tick(float DeltaSeconds)
@@ -201,32 +282,12 @@ void AXiaomaPatroller::Tick(float DeltaSeconds)
         HitCooldown = FMath::Max(0.f, HitCooldown - DeltaSeconds);
     }
 
-    const float Total = static_cast<float>(Def.Path.Num() - 1);
-    TravelDistance += MoveDirection * Def.Speed * DeltaSeconds;
-
-    // 到端点折返：把越过端点的那段距离折回来，卡顿时会来回折几次
-    while (TravelDistance > Total || TravelDistance < 0.f)
+    // 停住时位置与朝向一律不动；撞人判定仍要做，站着也是一只捣蛋鬼
+    if (!bStalled)
     {
-        if (TravelDistance > Total)
-        {
-            TravelDistance = Total - (TravelDistance - Total);
-            MoveDirection = -1;
-        }
-        else
-        {
-            TravelDistance = -TravelDistance;
-            MoveDirection = 1;
-        }
+        Advance(DeltaSeconds);
+        UpdateTransform();
     }
-
-    // 前方格放着 X 标记：路障，掉头
-    if (IsUpcomingCellMarked())
-    {
-        MoveDirection = -MoveDirection;
-        TravelDistance = FMath::Clamp(TravelDistance + MoveDirection * TurnNudge, 0.f, Total);
-    }
-
-    UpdateTransform();
     CheckHerdsmanHit();
 }
 
@@ -265,7 +326,15 @@ FIntPoint AXiaomaPatroller::GetCurrentCell() const
 
 void AXiaomaPatroller::OnBoardChanged(const FXiaomaLevel& Level, const TArray<uint8>& Cells)
 {
+    // 召唤小马、用提示星也会走到这里，那些并不影响 X 路障；
+    // 只有标记真的变了才重算可走区间，免得停住的捣蛋鬼被无谓地唤醒又立刻停回去。
+    if (Cells == BoardCells)
+    {
+        return;
+    }
     BoardCells = Cells;
+    RecomputeBounds();
+    UpdateTransform();
 }
 
 void AXiaomaPatroller::LoadState(const TArray<uint8>& In)

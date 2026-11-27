@@ -114,7 +114,6 @@ public:
     int32 GetUnlockedLevel() const;
     int32 GetContinueLevel() const;
     int32 GetLives() const { return CurrentLives; }
-    int32 GetMaxLives() const { return 5; }
     int32 GetStepCount() const { return StepCount; }
     int32 GetParSteps() const;
     int32 GetHintTokens() const { return HintTokens; }

@@ -43,7 +43,11 @@ public:
 private:
     void BuildVisuals();
     void UpdateTransform();
-    bool IsUpcomingCellMarked() const;
+    void Advance(float DeltaSeconds);
+    /** 按当前 X 标记重算可走区间；区间太窄就直接停住 */
+    void RecomputeBounds();
+    /** Path 上第 Index 个格是否被 X 标记 */
+    bool IsMarked(int32 Index) const;
     void CheckHerdsmanHit();
     FVector CellLocation(FIntPoint Cell) const;
 
@@ -58,8 +62,13 @@ private:
     /** 沿路线的行程，单位是格；0 = 起点，Num()-1 = 终点 */
     float TravelDistance = 0.f;
     int32 MoveDirection = 1;
+    /** 可走的行程区间（单位格），由沿途的 X 标记决定；两端之外是被堵死的格 */
+    float MinTravel = 0.f;
+    float MaxTravel = 0.f;
     float HitCooldown = 0.f;
     bool bPatrolEnabled = true;
+    /** 可走区间窄到没法正常巡逻，原地停住；X 标记一变就解除 */
+    bool bStalled = false;
 
     FXiaomaPatrollerHitDelegate OnHitHerdsman;
 

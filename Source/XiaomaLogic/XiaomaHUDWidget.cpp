@@ -233,8 +233,10 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
     UVerticalBox* Panel = MakePanel(Root, FVector2D(22.f, 24.f), FVector2D(250.f, 520.f),
         FVector2D::ZeroVector, FVector2D::ZeroVector);
     AddText(Panel, FString::Printf(TEXT("第 %02d 关"), Game->GetLevelNumber()), 28, Green);
-    AddText(Panel, FString::Printf(TEXT("生命 %d/%d  ·  步数 %d/%d"),
-        Game->GetLives(), Game->GetMaxLives(), Game->GetStepCount(), Game->GetParSteps()), 16, Gold);
+    // 生命不带分母：各关初始生命不同（1~10 关 3、11 关起 2），吃苹果最高到 5，
+    // 原先恒写 "/5" 会让满血看起来像掉过血。
+    AddText(Panel, FString::Printf(TEXT("生命 %d  ·  步数 %d/%d"),
+        Game->GetLives(), Game->GetStepCount(), Game->GetParSteps()), 16, Gold);
     AddText(Panel, FString::Printf(TEXT("提示星 %d  ·  四叶草 %s"),
         Game->GetHintTokens(), Game->HasClover() ? TEXT("有") : TEXT("无")), 16, Gold);
     AddText(Panel, FString::Printf(TEXT("好感 %d  ·  连胜 %d"),
