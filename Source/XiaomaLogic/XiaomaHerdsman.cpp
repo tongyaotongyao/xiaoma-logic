@@ -137,6 +137,8 @@ FIntPoint AXiaomaHerdsman::WorldToRawCell(const FVector& Location)
 void AXiaomaHerdsman::TeleportToCell(FIntPoint Cell)
 {
     CurrentCell = FIntPoint(FMath::Clamp(Cell.X, 0, 5), FMath::Clamp(Cell.Y, 0, 5));
+    // 传送不是"走过来"：来路跟着对齐，否则下一步会拿传送前那一格当上桥格
+    PreviousCell = CurrentCell;
     SetActorLocation(CellToWorld(CurrentCell));
     PendingInput = FVector2D::ZeroVector;
     // 死亡重生、撤销、读档都是直接把主角搬回格心，别把上一段的滑行状态带过来
@@ -190,6 +192,8 @@ void AXiaomaHerdsman::UpdateCurrentCell()
     const float Dy = FMath::Abs(Loc.Y - CurrentCenter.Y);
     if (Dx > CellStep * 0.62f || Dy > CellStep * 0.62f)
     {
+        // 先记来路再赋值：广播期间各机关读 PreviousCell 拿到的都是"进入这一格之前"的位置
+        PreviousCell = CurrentCell;
         CurrentCell = Raw;
         OnCellChanged.ExecuteIfBound(CurrentCell);
     }
@@ -202,6 +206,7 @@ void AXiaomaHerdsman::SyncCurrentCellNow()
     {
         return;
     }
+    PreviousCell = CurrentCell;
     CurrentCell = Raw;
     OnCellChanged.ExecuteIfBound(CurrentCell);
 }

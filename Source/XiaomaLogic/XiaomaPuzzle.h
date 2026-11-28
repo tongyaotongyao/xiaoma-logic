@@ -94,6 +94,12 @@ struct FXiaomaAdventureData
      * 冰面上不放道具、宝箱、木箱，校验工具会检查。
      */
     TArray<FIntPoint> Ice;
+    /**
+     * 塌陷木桥：初始完好可通行，主角走过一次就塌成坑、不能再进入。
+     * 每座桥是一个机关（`AXiaomaBridge`），状态要进撤销快照与存档，
+     * 所以解析出来的只是初始格，运行时会额外生成 actor。
+     */
+    TArray<FIntPoint> Bridges;
 };
 
 struct FXiaomaLevel

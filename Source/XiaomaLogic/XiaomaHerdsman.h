@@ -35,6 +35,12 @@ public:
 
     FIntPoint GetCurrentCell() const { return CurrentCell; }
     int32 GetCurrentCellIndex() const { return CurrentCell.X * 6 + CurrentCell.Y; }
+    /**
+     * 进入 CurrentCell 之前所在的那一格。
+     * 塌陷木桥用它记住"从哪一格上的桥"，撤销时好把主角放回上桥前的位置。
+     * 传送（撤销/读档/挨撞弹回）之后两者一起对齐，避免把传送前那一格当成来路。
+     */
+    FIntPoint GetPreviousCell() const { return PreviousCell; }
 
     /** 由 GameMode 注入：某一格当前是否被机关封住（障碍、关上的围栏等） */
     void SetCellBlockedPredicate(TFunction<bool(FIntPoint)> InPredicate)
@@ -92,6 +98,8 @@ private:
     TObjectPtr<USceneComponent> VisualRoot;
 
     FIntPoint CurrentCell = FIntPoint(5, 0);
+    /** 进入当前格之前所在的那一格（见 GetPreviousCell 的说明） */
+    FIntPoint PreviousCell = FIntPoint(5, 0);
     FVector2D PendingInput = FVector2D::ZeroVector;
     bool bOverviewCamera = false;
     bool bMovementEnabled = true;

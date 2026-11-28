@@ -402,6 +402,28 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                     }
                 }
             }
+            // 塌陷木桥：每座桥一个机关 actor，状态（完好/已塌）进存档与撤销快照
+            const TArray<TSharedPtr<FJsonValue>>* BridgeArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("bridges"), BridgeArr) && BridgeArr)
+            {
+                for (const TSharedPtr<FJsonValue>& BridgeVal : *BridgeArr)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* BridgeCellArr = nullptr;
+                    FIntPoint BridgeCell;
+                    if (BridgeVal->TryGetArray(BridgeCellArr) && BridgeCellArr
+                        && ParseIntPoint(*BridgeCellArr, BridgeCell))
+                    {
+                        if (!Level.Adventure.Bridges.Contains(BridgeCell))
+                        {
+                            Level.Adventure.Bridges.Add(BridgeCell);
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: bridge cell out of range, ignored"), Level.Id);
+                    }
+                }
+            }
         }
         OutLevels.Add(MoveTemp(Level));
     }
@@ -623,6 +645,14 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
     {
         Mix(IceCell.X);
         Mix(IceCell.Y);
+    }
+
+    // 木桥按 Mechanisms 下标写进存档，格数或顺序一变，已有续局的桥状态就错位了
+    Mix(Level.Adventure.Bridges.Num());
+    for (const FIntPoint& BridgeCell : Level.Adventure.Bridges)
+    {
+        Mix(BridgeCell.X);
+        Mix(BridgeCell.Y);
     }
 
     return static_cast<int32>(Hash & 0x7fffffffu);

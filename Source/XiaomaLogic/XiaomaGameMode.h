@@ -156,6 +156,12 @@ private:
     void OnHerdsmanCellChanged(FIntPoint NewCell);
     /** 刚踩上冰面：滑行这一段玩家中途控不了，先存一个撤销点 */
     void OnHerdsmanSlideBegin();
+    /** 刚踩上木桥：桥还完好，只给提示，不压撤销点 */
+    void OnBridgeStepped(class AXiaomaBridge* Bridge);
+    /** 木桥即将塌陷（桥此刻还完好）：在塌陷前压一条撤销快照，按 Z 能把桥修好 */
+    void OnBridgeCollapsing(class AXiaomaBridge* Bridge);
+    /** 直接把主角搬走（撤销/读档/挨撞）之后，把"人还在不在桥上"同步给各座桥 */
+    void SyncBridgeOccupancy();
     void OnWheelSelectColour(int32 ColourIndex);
     void OnWheelRecall();
     void OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FString& OutMessage);

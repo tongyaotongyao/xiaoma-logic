@@ -34,7 +34,9 @@ class AdventureDataTests(unittest.TestCase):
         for level in DATA["levels"]:
             walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
             ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
-            minimum = va.min_steps(adventure(level)["start"], solution_cells(level), walkable, ice)
+            bridges = {va.as_cell(cell) for cell in adventure(level).get("bridges") or []}
+            minimum = va.min_steps(adventure(level)["start"], solution_cells(level),
+                                   walkable, ice, bridges)
             self.assertIsNotNone(minimum, level["id"])
             self.assertEqual(adventure(level)["par"], va.par_from(minimum), level["id"])
 
@@ -42,7 +44,8 @@ class AdventureDataTests(unittest.TestCase):
         for level in DATA["levels"]:
             walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
             ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
-            reached = va.reachable(adventure(level)["start"], walkable, ice)
+            bridges = {va.as_cell(cell) for cell in adventure(level).get("bridges") or []}
+            reached = va.reachable(adventure(level)["start"], walkable, ice, bridges)
             for cell in solution_cells(level):
                 self.assertIn(cell, reached, (level["id"], cell))
             for chest in adventure(level).get("chests") or []:
@@ -388,6 +391,91 @@ class PuzzlePacingTests(unittest.TestCase):
         frozen = va.walkable_cells(adv.get("obstacles") or []) - ice
         reached = va.reachable(adv["start"], frozen)
         self.assertTrue(set(solution_cells(level)) - reached, "把冰面当墙就通不了关")
+
+
+class BridgeTests(unittest.TestCase):
+    """塌陷木桥：按格计步，跨过去就变坑，塌了的桥不能再进。"""
+
+    def test_bridge_costs_one_step_like_floor(self):
+        walkable = {(0, col) for col in range(va.SIZE)}
+        self.assertEqual(va.min_steps((0, 0), [(0, 5)], walkable), 5)
+        self.assertEqual(va.min_steps((0, 0), [(0, 5)], walkable, frozenset(), {(0, 2)}), 5)
+
+    def test_bridge_cell_is_crossable(self):
+        walkable = {(0, col) for col in range(va.SIZE)}
+        reached = va.reachable((0, 0), walkable, frozenset(), {(0, 2)})
+        self.assertIn((0, 2), reached)
+        self.assertIn((0, 5), reached)
+
+    def test_used_bridge_blocks_reentry(self):
+        index = {(0, 1): 1}
+        self.assertFalse(va.bridge_step_blocked((0, 1), index, 0))
+        self.assertTrue(va.bridge_step_blocked((0, 1), index, 1))
+
+    def test_collapse_never_helps_the_player(self):
+        """同样的地图，木桥会让最短步数不变或变长，绝不会变短。"""
+        walkable = va.walkable_cells([(2, 2), (2, 3)])
+        targets = [(0, 0), (5, 5)]
+        flat = va.min_steps((5, 0), targets, walkable)
+        bridged = va.min_steps((5, 0), targets, walkable, frozenset(), {(4, 4)})
+        self.assertIsNotNone(bridged)
+        self.assertGreaterEqual(bridged, flat)
+
+
+class BridgeGuardTests(unittest.TestCase):
+    """木桥的数据守卫：不压正解格，不和冰面/木箱/巡逻路线打架。"""
+
+    def check(self, level):
+        errors, warnings = [], []
+        va.check_adventure(level, errors, warnings)
+        return errors
+
+    def level_18(self):
+        return copy.deepcopy(DATA["levels"][17])
+
+    def test_bridge_on_solution_cell_is_an_error(self):
+        level = self.level_18()
+        adventure(level)["bridges"] = [[0, 4]]
+        errors = self.check(level)
+        self.assertTrue(any("木桥" in message and "正解格" in message for message in errors), errors)
+
+    def test_bridge_with_ice_is_an_error(self):
+        level = self.level_18()
+        adventure(level)["bridges"] = [[0, 5]]
+        adventure(level)["ice"] = [[5, 5]]
+        errors = self.check(level)
+        self.assertTrue(any("冰面与塌陷木桥" in message for message in errors), errors)
+
+    def test_bridge_with_box_is_an_error(self):
+        level = self.level_18()
+        adventure(level)["bridges"] = [[0, 5]]
+        adventure(level)["boxes"] = [{"cell": [2, 4]}]
+        errors = self.check(level)
+        self.assertTrue(any("塌陷木桥与木箱" in message for message in errors), errors)
+
+    def test_patrol_path_over_bridge_is_an_error(self):
+        level = self.level_18()
+        adventure(level)["bridges"] = [[0, 5]]
+        adventure(level)["patrols"] = [{"path": [[0, 5], [1, 5], [2, 5]], "speed": 1.5}]
+        errors = self.check(level)
+        self.assertTrue(any("经过木桥" in message for message in errors), errors)
+
+
+class BridgePacingTests(unittest.TestCase):
+    def test_bridges_start_at_level_eighteen(self):
+        for level in DATA["levels"][:17]:
+            self.assertFalse(adventure(level).get("bridges"), level["id"])
+        for level in DATA["levels"][17:20]:
+            self.assertTrue(adventure(level).get("bridges"), level["id"])
+
+    def test_bridge_levels_need_the_bridge(self):
+        """把木桥当成墙就通不了关，说明桥不是装饰。"""
+        for level in DATA["levels"][17:20]:
+            adv = adventure(level)
+            bridges = {va.as_cell(cell) for cell in adv["bridges"]}
+            closed = va.walkable_cells(adv.get("obstacles") or []) - bridges
+            reached = va.reachable(adv["start"], closed)
+            self.assertTrue(set(solution_cells(level)) - reached, level["id"])
 
 
 if __name__ == "__main__":

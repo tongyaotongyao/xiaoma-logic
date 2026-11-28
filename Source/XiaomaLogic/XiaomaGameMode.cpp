@@ -1,6 +1,7 @@
 #include "XiaomaGameMode.h"
 
 #include "XiaomaBoardActor.h"
+#include "XiaomaBridge.h"
 #include "XiaomaHerdsman.h"
 #include "XiaomaHUDWidget.h"
 #include "XiaomaIceField.h"
@@ -679,6 +680,24 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Mechanisms.Add(Patroller);
         }
     }
+    // 木桥排在最后生成：机关的 SaveState 是按 Mechanisms 下标写进存档的，
+    // 新类型只有往后追加，老关卡（没有桥）的存档下标才不会被顶歪
+    for (const FIntPoint& BridgeCell : Level->Adventure.Bridges)
+    {
+        AXiaomaBridge* Bridge = GetWorld()->SpawnActor<AXiaomaBridge>(AXiaomaBridge::StaticClass());
+        if (Bridge)
+        {
+            // 连着别的桥格就按"沿列延伸"铺板，孤立一格就随便取一种
+            const bool bAlongColumns = Level->Adventure.Bridges.Contains(FIntPoint(BridgeCell.X, BridgeCell.Y - 1))
+                || Level->Adventure.Bridges.Contains(FIntPoint(BridgeCell.X, BridgeCell.Y + 1));
+            Bridge->SetupBridge(BridgeCell, Board->GetCellWorldLocation(BridgeCell), Board, bAlongColumns);
+            Bridge->SetOnStepped(FXiaomaBridgeSteppedDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnBridgeStepped));
+            Bridge->SetOnCollapsing(FXiaomaBridgeCollapsingDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnBridgeCollapsing));
+            Mechanisms.Add(Bridge);
+        }
+    }
     NotifyMechanismsBoardChanged();
     RefreshPushPlates(false);
 }
@@ -748,6 +767,8 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
         // 机关与道具是在 SpawnAdventureActors 里新建的，必须等它们都就位后再贴存档状态
         RestoreActiveRound(Level);
     }
+    // 读档把主角放到上次站的位置，桥要知道人是不是正好站在它上面
+    SyncBridgeOccupancy();
 
     StatusMessage = TEXT("WASD 移动，E 打开召唤轮盘或开箱，F 标记排除，Tab 看全局");
     BoardInputReadyAt = FPlatformTime::Seconds() + 0.25;
@@ -798,6 +819,81 @@ void AXiaomaGameMode::OnHerdsmanSlideBegin()
     }
     // 此时主角刚站上第一块冰格、还没开始位移，快照停在这里正好是“重选方向”的位置
     PushUndoSnapshot();
+}
+
+void AXiaomaGameMode::OnBridgeStepped(AXiaomaBridge* Bridge)
+{
+    if (Screen != EXiaomaScreen::Playing || !Bridge)
+    {
+        return;
+    }
+    // 记下"从哪一格上的桥"：塌陷后撤销要退到这里。此刻 Herdsman 的 CurrentCell 已经是桥格，
+    // PreviousCell 还停在来路上，所以读得到。
+    if (Herdsman)
+    {
+        const FIntPoint From = Herdsman->GetPreviousCell();
+        Bridge->SetApproachCell(From != Bridge->GetBridgeCell() ? From : Bridge->GetBridgeCell());
+    }
+    // 只给提示，不压快照：桥还没塌，没有需要复原的东西；
+    // 真正的撤销点由 OnBridgeCollapsing 在塌陷那一刻压，一次过桥只对应一条
+    StatusMessage = TEXT("木桥只能走一次：离开这一格就塌了");
+    if (GameWidget)
+    {
+        GameWidget->Refresh();
+    }
+}
+
+void AXiaomaGameMode::OnBridgeCollapsing(AXiaomaBridge* Bridge)
+{
+    if (Screen != EXiaomaScreen::Playing || !Bridge)
+    {
+        return;
+    }
+    // 此刻桥还完好、人已经站到下一格：快照记的是"桥没塌"的那一瞬间
+    PushUndoSnapshot();
+    if (UndoHistory.Num() > 0)
+    {
+        // 把这条快照改成"过桥之前"：人退回来路上那一格，步数也退回上桥前。
+        // 进桥格、离桥格正好两步，所以从当前步数减 2；这样一次撤销 = 这次过桥没发生，
+        // 桥恢复、人和步数都回到原样，可以换条路再走。
+        FXiaomaUndoSnapshot& Snap = UndoHistory.Last();
+        const FIntPoint From = Bridge->GetApproachCell();
+        // 连环木桥：上桥格本身可能是另一座已经塌掉的桥，那就别把人塞进坑里，保留原落点
+        bool bApproachIsPit = false;
+        for (const AXiaomaMechanism* Mech : Mechanisms)
+        {
+            if (Mech && Mech != Bridge && Mech->BlocksCell(From))
+            {
+                bApproachIsPit = true;
+                break;
+            }
+        }
+        if (!bApproachIsPit)
+        {
+            Snap.HerdsmanCell = From;
+            Snap.StepCount = FMath::Max(0, Snap.StepCount - 2);
+        }
+    }
+    StatusMessage = TEXT("木桥塌了（按 Z 可以回到过桥前）");
+}
+
+void AXiaomaGameMode::SyncBridgeOccupancy()
+{
+    if (!Herdsman)
+    {
+        return;
+    }
+    // 只同步"人在不在桥上"。这里绝不能压快照：撤销会把状态恢复成快照里的样子，
+    // 若此时人正好站在完好的桥上、又补压一条，栈顶就被"刚恢复的状态"占住，
+    // 之后再按 Z 只是反复 pop/push 同一个状态，更早的历史永远走不到。
+    const FIntPoint Cell = Herdsman->GetCurrentCell();
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (AXiaomaBridge* Bridge = Cast<AXiaomaBridge>(Mech))
+        {
+            Bridge->SyncHerdsmanCell(Cell);
+        }
+    }
 }
 
 void AXiaomaGameMode::OnHerdsmanCellChanged(FIntPoint NewCell)
@@ -1190,6 +1286,8 @@ void AXiaomaGameMode::OnPatrollerHitHerdsman(AXiaomaPatroller* Patroller)
     }
     // 先弹回起点再扣命：LoseLife 会立即落盘，存档里记的应该是弹回之后的位置
     Herdsman->TeleportToCell(Level->Adventure.StartCell);
+    // 传送不走"进入新格"，桥要是不跟着复位，下一步会误判"人刚离开桥"而把桥塌掉
+    SyncBridgeOccupancy();
     // 被弹回起点本身就是惩罚，之前那几步不该还能按 Z 撤回来（四叶草抵挡时也一样）
     UndoHistory.Reset();
     LoseLife(TEXT("被捣蛋鬼撞到了，弹回起点并失去一条生命"));
@@ -1391,6 +1489,8 @@ void AXiaomaGameMode::Undo()
     }
     // Cells 被整体换掉了，捣蛋鬼缓存的标记格也要跟着更新
     NotifyMechanismsBoardChanged();
+    // 撤销把主角搬回快照格，桥的"人还在桥上吗"得跟着重算，否则下一步会误塌
+    SyncBridgeOccupancy();
     // 木箱可能被撤回到压力板之外，压力板视觉要跟着回去
     RefreshPushPlates(false);
     StatusMessage = TEXT("已撤销上一步");

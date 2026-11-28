@@ -125,6 +125,19 @@ bool FXiaomaPuzzleTest::RunTest(const FString& Parameters)
     Iced.Adventure.Ice.Add(FIntPoint(5, 5));
     TestNotEqual(TEXT("Fingerprint tracks ice"), FXiaomaPuzzle::AdventureFingerprint(Iced), Fingerprint6);
 
+    // 木桥：第 18 关起才配；桥的数量与顺序决定存档里机关下标，所以必须进指纹
+    for (int32 Index = 0; Index < 17; ++Index)
+    {
+        TestTrue(FString::Printf(TEXT("Level %d has no bridges"), Levels[Index].Id),
+            Levels[Index].Adventure.Bridges.IsEmpty());
+    }
+    TestEqual(TEXT("Level 18 bridge cells parsed"), Levels[17].Adventure.Bridges.Num(), 1);
+    TestEqual(TEXT("Level 19 bridge cells parsed"), Levels[18].Adventure.Bridges.Num(), 2);
+    TestEqual(TEXT("Level 20 bridge cells parsed"), Levels[19].Adventure.Bridges.Num(), 1);
+    FXiaomaLevel Bridged = Levels[5];
+    Bridged.Adventure.Bridges.Add(FIntPoint(5, 5));
+    TestNotEqual(TEXT("Fingerprint tracks bridges"), FXiaomaPuzzle::AdventureFingerprint(Bridged), Fingerprint6);
+
     // 续局判定：关卡、格数、生命、布局指纹任一条不对就不续
     UXiaomaSaveGame* Round = NewObject<UXiaomaSaveGame>();
     Round->MigrateLevelRevision();
