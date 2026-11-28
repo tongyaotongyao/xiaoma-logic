@@ -48,7 +48,10 @@ class AdventureDataTests(unittest.TestCase):
             walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
             ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
             bridges = {va.as_cell(cell) for cell in adventure(level).get("bridges") or []}
-            minimum = va.min_steps(adventure(level)["start"], solution_cells(level),
+            # 三星要求集齐宝箱，所以 par 的目标不只是 6 个正解格，
+            # 还要包含宝箱谜题里必须踩到的格子（见 chest_route_cells）
+            targets = solution_cells(level) | set(va.chest_route_cells(adventure(level).get("chests")))
+            minimum = va.min_steps(adventure(level)["start"], targets,
                                    walkable, ice, bridges, gates_of(level))
             self.assertIsNotNone(minimum, level["id"])
             self.assertEqual(adventure(level)["par"], va.par_from(minimum), level["id"])
@@ -379,6 +382,72 @@ class GateTests(unittest.TestCase):
         adventure(level)["gates"][0]["switch"] = [4, 4]
         _, errors, _ = va.validate(broken)
         self.assertTrue(any("switch" in message and "障碍同格" in message for message in errors), errors)
+
+
+class ChainChestTests(unittest.TestCase):
+    """组合宝箱：`puzzle.then` 串起来的多段谜题。"""
+
+    def test_level_22_chest_is_a_two_stage_chain(self):
+        level = DATA["levels"][21]
+        chests = adventure(level)["chests"]
+        self.assertEqual(len(chests), 1)
+        chain = [stage.get("type") for stage in va.puzzle_stages(chests[0]["puzzle"])]
+        self.assertEqual(chain, ["stele", "runes"])
+
+    def test_every_chest_has_at_least_one_stage(self):
+        for level in DATA["levels"]:
+            for chest in adventure(level).get("chests") or []:
+                stages = list(va.puzzle_stages(chest.get("puzzle") or {}))
+                self.assertGreaterEqual(len(stages), 1, level["id"])
+                self.assertLessEqual(len(stages), va.MAX_PUZZLE_STAGES, level["id"])
+
+    def test_level_22_chest_sits_inside_the_gate(self):
+        """设计文档要求：宝箱埋在被围栏围住的色区里，先开门才拿得到。"""
+        level = DATA["levels"][21]
+        chest = tuple(adventure(level)["chests"][0]["cell"])
+        gate = adventure(level)["gates"][0]
+        self.assertEqual(level["regions"][chest[0]][chest[1]], gate["region"])
+
+    def test_third_star_needs_every_chest(self):
+        """par 必须把宝箱路线算进去，否则「步数达标 + 集齐」不可能同时满足。"""
+        level = DATA["levels"][4]
+        walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
+        gates = gates_of(level)
+        solution_only = va.min_steps(adventure(level)["start"], solution_cells(level),
+                                     walkable, frozenset(), frozenset(), gates)
+        with_chest = va.min_steps(
+            adventure(level)["start"],
+            solution_cells(level) | set(va.chest_route_cells(adventure(level).get("chests"))),
+            walkable, frozenset(), frozenset(), gates)
+        self.assertGreater(with_chest, solution_only, "宝箱不在正解路线上，par 应该变大")
+        self.assertLessEqual(with_chest, adventure(level)["par"])
+
+    def test_too_many_stages_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        chest = broken["levels"][21]["adventure"]["chests"][0]
+        # 现在两段，再挂两层就四段，超过上限 3
+        third = {"type": "rule", "target": "row", "index": 0}
+        third["then"] = {"type": "rule", "target": "row", "index": 1}
+        chest["puzzle"]["then"]["then"] = third
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("最多" in message for message in errors), errors)
+
+    def test_second_stage_rune_on_obstacle_is_an_error(self):
+        """链式后续段的符文格也要进冲突检查，不能只看第一段。"""
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][21]
+        level["adventure"]["obstacles"] = [[2, 4]]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("then.order[0]" in message and "障碍" in message
+                            for message in errors), errors)
+
+    def test_second_stage_rune_on_solution_cell_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][21]
+        level["adventure"]["chests"][0]["puzzle"]["then"]["order"] = [[0, 4], [2, 5]]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("then.order[0]" in message and "正解格" in message
+                            for message in errors), errors)
 
 
 class BoxPushTests(unittest.TestCase):

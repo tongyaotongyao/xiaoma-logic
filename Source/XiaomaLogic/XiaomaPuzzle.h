@@ -35,18 +35,19 @@ struct FXiaomaItemDef
     FIntPoint Cell = FIntPoint(0, 0);
 };
 
-/** 关卡中宝箱配置 */
-struct FXiaomaChestDef
+/**
+ * 宝箱谜题的一段。组合宝箱（JSON 里的 `puzzle.then`）就是多段按顺序完成：
+ * 前一段做完，下一段才开始响应，最后一段完成宝箱才真正打开。
+ */
+struct FXiaomaChestStage
 {
-    FIntPoint Cell = FIntPoint(0, 0);
-    EXiaomaItemType Reward = EXiaomaItemType::Hint;
     EXiaomaChestPuzzleType PuzzleType = EXiaomaChestPuzzleType::Rule;
 
     /** 规则开箱：绑定哪一行/列/色区 */
     EXiaomaChestRuleType RuleType = EXiaomaChestRuleType::Row;
     int32 RuleIndex = 0;
 
-    /** 符文宝箱：按此顺序踩亮这些格才会开箱 */
+    /** 符文宝箱：按此顺序踩亮这些格才会完成这一段 */
     TArray<FIntPoint> RuneOrder;
 
     /** 石碑宝箱：石碑立在 SteleCell，读到的提示是 ClueText，宝箱埋在 SteleAnswer */
@@ -59,6 +60,19 @@ struct FXiaomaChestDef
      * 同一个坐标写两处迟早会对不上，校验工具负责检查「确实有箱子能推到这块板」。
      */
     FIntPoint PushPlate = FIntPoint(-1, -1);
+};
+
+/** 关卡中宝箱配置：一个格子 + 至少一段谜题 */
+struct FXiaomaChestDef
+{
+    FIntPoint Cell = FIntPoint(0, 0);
+    EXiaomaItemType Reward = EXiaomaItemType::Hint;
+
+    /** 按顺序完成，Stages.Num() >= 1；没有 `then` 的宝箱只有一段 */
+    TArray<FXiaomaChestStage> Stages;
+
+    int32 NumStages() const { return Stages.Num(); }
+    const FXiaomaChestStage& StageAt(int32 Index) const { return Stages[Index]; }
 };
 
 /** 推箱木箱：初始占据一格，主角撞上去整格推动 */

@@ -178,6 +178,30 @@ int32 AXiaomaGameMode::GetLevelStars(int32 LevelNumber) const
 }
 int32 AXiaomaGameMode::GetCurrentStars() const { return GetLevelStars(GetLevelNumber()); }
 
+int32 AXiaomaGameMode::GetChestCount() const
+{
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    return Level ? Level->Adventure.Chests.Num() : 0;
+}
+
+int32 AXiaomaGameMode::GetOpenedChestCount() const
+{
+    // 不另存计数：撤销会把宝箱退回未开，读档也是从机关状态恢复的，
+    // 数一遍真实状态永远和画面一致，比维护一个计数器可靠。
+    int32 Opened = 0;
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (const AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech))
+        {
+            if (Chest->IsClaimed())
+            {
+                ++Opened;
+            }
+        }
+    }
+    return Opened;
+}
+
 bool AXiaomaGameMode::IsSoundEnabled() const
 {
     return Progress && Progress->bSoundEnabled;
@@ -1031,14 +1055,14 @@ void AXiaomaGameMode::InteractPressed()
         {
             if (const AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech))
             {
-                const FXiaomaChestDef& Def = Chest->GetDef();
+                // 石碑格可能属于任何一段（组合宝箱里前一段的石碑也要能念），
+                // 所以这里问 Chest 要"这一格是哪段石碑"，而不是只看第一段。
+                const FXiaomaChestStage* SteleStage = Chest->FindSteleStage(Cell);
                 bool bShowPrompt = false;
-                if (!Chest->IsClaimed()
-                    && Def.PuzzleType == EXiaomaChestPuzzleType::Stele
-                    && Cell == Def.SteleCell && !Def.ClueText.IsEmpty())
+                if (!Chest->IsClaimed() && SteleStage && !SteleStage->ClueText.IsEmpty())
                 {
                     // 站在石碑上按 E：念出线索，代替轮盘
-                    StatusMessage = FString::Printf(TEXT("石碑：%s"), *Def.ClueText);
+                    StatusMessage = FString::Printf(TEXT("石碑：%s"), *SteleStage->ClueText);
                     bShowPrompt = true;
                 }
                 else if (!Chest->IsClaimed())
@@ -1396,9 +1420,17 @@ bool AXiaomaGameMode::CanBoxEnter(FIntPoint Cell, const AXiaomaMechanism* Ignore
     {
         for (const FXiaomaChestDef& Chest : Level->Adventure.Chests)
         {
-            if (Chest.Cell == Cell || Chest.SteleCell == Cell)
+            if (Chest.Cell == Cell)
             {
                 return false;
+            }
+            // 组合宝箱的每一段都可能有石碑，全都不能压
+            for (const FXiaomaChestStage& Stage : Chest.Stages)
+            {
+                if (Stage.SteleCell == Cell)
+                {
+                    return false;
+                }
             }
         }
     }
@@ -1465,11 +1497,12 @@ void AXiaomaGameMode::RefreshPushPlates(bool bAnnounce)
     for (AXiaomaMechanism* Mech : Mechanisms)
     {
         AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech);
-        if (!Chest || Chest->GetDef().PuzzleType != EXiaomaChestPuzzleType::Push)
+        // 组合宝箱只有当"当前这一段"是推箱时才看压力板，其余段这块板不存在
+        if (!Chest || !Chest->IsPushStageActive())
         {
             continue;
         }
-        const FIntPoint Plate = Chest->GetDef().PushPlate;
+        const FIntPoint Plate = Chest->GetActivePlate();
         bool bPressed = false;
         for (const AXiaomaMechanism* Other : Mechanisms)
         {
@@ -1481,8 +1514,8 @@ void AXiaomaGameMode::RefreshPushPlates(bool bAnnounce)
             }
         }
         Chest->SetPlatePressed(bPressed);
-        const bool bWasLocked = !Chest->IsUnlocked() && !Chest->IsClaimed();
-        if (bPressed && bWasLocked)
+        // 已推完就别再提示一次：箱子推上推下会反复刷新这块板
+        if (bPressed && !Chest->IsActiveStageComplete() && !Chest->IsClaimed())
         {
             // 一次性锁存：之后把箱子推走也不会重新上锁
             Chest->UnlockByMechanism();
@@ -1629,9 +1662,15 @@ void AXiaomaGameMode::SubmitAnswer()
     else if (Result == EXiaomaBoardResult::Solved)
     {
         const int32 Par = Level->Adventure.ParSteps;
+        const int32 ChestTotal = GetChestCount();
+        const int32 ChestOpened = GetOpenedChestCount();
         int32 Stars = 1;
         if (StepCount <= Par) ++Stars;
-        if (HintsUsed == 0) ++Stars;
+        // 第三颗星原本是「没用过提示」，但提示星本来就是解谜挣来的奖励，
+        // 奖励拿来用还要扣星，等于让玩家不敢用。改成看「有没有把本关宝箱集齐」：
+        // 开箱从可选补给变成三星必经，链式宝箱才有分量。
+        // 没有宝箱的关（第 1、2 关）自动算集齐，否则永远拿不到三星。
+        if (ChestOpened >= ChestTotal) ++Stars;
 
         Progress->StarsByLevel[CurrentLevelIndex] = FMath::Max(
             Progress->StarsByLevel[CurrentLevelIndex], Stars);
@@ -1644,8 +1683,8 @@ void AXiaomaGameMode::SubmitAnswer()
         Progress->bHasActiveRound = false;
         // 通关后「继续游戏」落到下一关；最后一关则停在最后一关
         Progress->LastPlayedLevel = FMath::Min(Levels.Num(), CurrentLevelIndex + 2);
-        StatusMessage = FString::Printf(TEXT("通关！步数 %d/%d，获得 %d 颗星，好感度 +5"),
-            StepCount, Par, Stars);
+        StatusMessage = FString::Printf(TEXT("通关！步数 %d/%d，宝箱 %d/%d，获得 %d 颗星，好感度 +5"),
+            StepCount, Par, ChestOpened, ChestTotal, Stars);
         SetScreen(EXiaomaScreen::Won);
         if (Board)
         {

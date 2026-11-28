@@ -42,11 +42,66 @@ DECLARE_DELEGATE_ThreeParams(FXiaomaChestOpenedDelegate, EXiaomaItemType /*Rewar
 DECLARE_DELEGATE_TwoParams(FXiaomaChestNoticeDelegate, const FString& /*Message*/, bool /*bPositive*/);
 
 /**
- * 宝箱：四种开箱谜题。
+ * 宝箱某一段的视觉部件。多段宝箱每段各有一套（各自的符文盘、石碑、压力板），
+ * 按 StageIndex 取用，非当前段压暗表示"还没轮到"。
+ */
+USTRUCT()
+struct FXiaomaChestStageVisuals
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<TObjectPtr<UStaticMeshComponent>> OrderGems;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UStaticMeshComponent>> RuneDiscs;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UStaticMeshComponent>> RuneGlyphs;
+
+    UPROPERTY()
+    TArray<TObjectPtr<UMaterialInstanceDynamic>> RuneMaterials;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> SteleBase = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> SteleSlab = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> SteleGlyph = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> DigMarker = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInstanceDynamic> DigMaterial = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> PlatePad = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UStaticMeshComponent> PlateGlow = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInstanceDynamic> PlateMaterial = nullptr;
+
+    UPROPERTY()
+    TObjectPtr<UMaterialInstanceDynamic> PlateGlowMaterial = nullptr;
+
+    /** 压力板上此刻有没有箱子，只影响视觉反馈 */
+    bool bPlatePressed = false;
+};
+
+/**
+ * 宝箱：四种开箱谜题，可以按顺序串联成组合宝箱。
  * - Rule  ：指定行/列/色区放对小马后自动弹开（M2）
  * - Runes ：按宝箱上方的颜色顺序踩亮场上符文格，踩错全部熄灭（M3）
  * - Stele ：先按 E 读石碑拿线索，再走到发光处按 E 挖出宝箱（M3）
  * - Push  ：把木箱推到压力板上，宝箱一次性打开（M4）
+ *
+ * 组合宝箱（JSON 的 `puzzle.then`）严格串行：只有当前段的机关响应输入，
+ * 前一段做完，下一段才亮起来；最后一段完成宝箱才真正打开。
  */
 UCLASS()
 class XIAOMALOGIC_API AXiaomaChest : public AXiaomaMechanism
@@ -60,16 +115,28 @@ public:
     void SetOnOpened(FXiaomaChestOpenedDelegate InDelegate) { OnChestOpened = InDelegate; }
     void SetOnNotice(FXiaomaChestNoticeDelegate InDelegate) { OnChestNotice = InDelegate; }
 
-    bool IsUnlocked() const { return bUnlocked; }
+    /** 所有段都完成（可以被领取） */
+    bool IsUnlocked() const { return Def.Stages.Num() > 0 && StageIndex >= Def.Stages.Num(); }
     bool IsClaimed() const { return bClaimed; }
-    bool IsSteleRead() const { return bSteleRead; }
-    int32 GetRuneProgress() const { return RuneProgress; }
+    /** 已完成的段数；等于 GetNumStages() 时表示全部解开 */
+    int32 GetStageIndex() const { return StageIndex; }
+    int32 GetNumStages() const { return Def.Stages.Num(); }
+    /** 当前段；全部完成后返回 nullptr */
+    const FXiaomaChestStage* GetActiveStage() const;
+    /** 这一格是不是某一阶段的石碑格（已完成的阶段也算，念线索要用） */
+    const FXiaomaChestStage* FindSteleStage(FIntPoint Cell) const;
+    /** 当前段是不是推箱：压力板只在它的段上生效 */
+    bool IsPushStageActive() const;
+    /** 当前段是否已经完成（全部完成时恒为 true） */
+    bool IsActiveStageComplete() const { return IsStageComplete(StageIndex); }
+    /** 当前段压力板所在格，不是推箱段时返回 (-1,-1) */
+    FIntPoint GetActivePlate() const;
     const FXiaomaChestDef& GetDef() const { return Def; }
 
-    /** 玩家此刻该看到的提示文案（按谜题类型与当前进度） */
+    /** 玩家此刻该看到的提示文案（按当前段与进度） */
     FString BuildPrompt() const;
 
-    /** 推箱宝箱：木箱到位时由 GameMode 直接解锁，一次性锁存（推走箱子也不会重新上锁） */
+    /** 推箱宝箱：木箱到位时由 GameMode 直接解锁当前段，一次性锁存 */
     void UnlockByMechanism();
 
     /** 压力板上此刻有没有箱子，只影响视觉反馈 */
@@ -82,24 +149,31 @@ public:
     virtual void LoadState(const TArray<uint8>& In) override;
 
 private:
+    /** 一段谜题完成所需的最大进度值（符文=个数、石碑=2 即挖出、其余=1） */
+    static int32 MaxProgressForStage(const FXiaomaChestStage& Stage);
+    /** 当前段是否已完成 */
+    bool IsStageComplete(int32 Index) const;
+    /** 把当前段记为完成，推进到下一段并给出提示；Prefix 会接在提示前面 */
+    void CompleteActiveStage(const FString& Prefix = FString());
+    /** 这一格是不是"还没轮到"的后续段符文格 */
+    bool IsFutureRuneCell(FIntPoint Cell) const;
     void RefreshVisuals();
-    void RefreshRuneVisuals();
-    void BuildRuneVisuals();
-    void BuildSteleVisuals();
-    void BuildPushVisuals();
+    void RefreshRuneVisuals(int32 StageNum);
+    void BuildStageVisuals(int32 StageNum);
     void HandleRuneStep(FIntPoint Cell);
     void TryClaim();
     bool IsBuried() const;
     FVector OffsetFromChest(FIntPoint Cell) const;
+    FXiaomaChestStageVisuals& Visuals(int32 StageNum) { return StageVisuals[StageNum]; }
 
     FXiaomaChestDef Def;
-    bool bUnlocked = false;
     bool bClaimed = false;
     /** 正在发开箱通知：通知期间状态还是“没开”，防止重入重复发奖励 */
     bool bClaiming = false;
-    bool bSteleRead = false;
-    bool bDug = false;
-    int32 RuneProgress = 0;
+    /** 已完成的段数，等于 Def.Stages.Num() 表示全部解开 */
+    int32 StageIndex = 0;
+    /** 每段各自的进度：符文=点亮数、石碑=0未读/1读过/2挖出、规则与推箱=0/1 */
+    TArray<uint8> StageProgress;
     FXiaomaChestOpenedDelegate OnChestOpened;
     FXiaomaChestNoticeDelegate OnChestNotice;
 
@@ -121,49 +195,9 @@ private:
     UPROPERTY()
     TObjectPtr<UMaterialInstanceDynamic> GemMaterial;
 
-    /** 符文宝箱：盖子上方按顺序排列的颜色宝石，以及场上对应颜色的符文格 */
+    /** 每段一套部件，下标与 Def.Stages 对齐 */
     UPROPERTY()
-    TArray<TObjectPtr<UStaticMeshComponent>> OrderGems;
-
-    UPROPERTY()
-    TArray<TObjectPtr<UStaticMeshComponent>> RuneDiscs;
-
-    UPROPERTY()
-    TArray<TObjectPtr<UStaticMeshComponent>> RuneGlyphs;
-
-    UPROPERTY()
-    TArray<TObjectPtr<UMaterialInstanceDynamic>> RuneMaterials;
-
-    /** 石碑宝箱：石碑本体（底座/碑身/浮空符印）与埋藏点提示 */
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> SteleBase;
-
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> SteleSlab;
-
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> SteleGlyph;
-
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> DigMarker;
-
-    UPROPERTY()
-    TObjectPtr<UMaterialInstanceDynamic> DigMaterial;
-
-    /** 推箱宝箱：压力板的铁盘与光环，位置由宝箱格与压力板格算出 */
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> PlatePad;
-
-    UPROPERTY()
-    TObjectPtr<UStaticMeshComponent> PlateGlow;
-
-    UPROPERTY()
-    TObjectPtr<UMaterialInstanceDynamic> PlateMaterial;
-
-    UPROPERTY()
-    TObjectPtr<UMaterialInstanceDynamic> PlateGlowMaterial;
-
-    bool bPlatePressed = false;
+    TArray<FXiaomaChestStageVisuals> StageVisuals;
 };
 
 /**

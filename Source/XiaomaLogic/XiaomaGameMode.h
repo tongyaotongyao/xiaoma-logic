@@ -128,6 +128,9 @@ public:
     int32 GetLevelStars(int32 LevelNumber) const;
     int32 GetCurrentStars() const;
     int32 GetHintCount() const { return HintsUsed; }
+    /** 本关宝箱总数与已开数量：三星的第三颗星看「有没有集齐」，HUD 也显示它 */
+    int32 GetChestCount() const;
+    int32 GetOpenedChestCount() const;
     const FString& GetStatusMessage() const { return StatusMessage; }
     AXiaomaBoardActor* GetBoard() const { return Board; }
     AXiaomaHerdsman* GetHerdsman() const { return Herdsman; }

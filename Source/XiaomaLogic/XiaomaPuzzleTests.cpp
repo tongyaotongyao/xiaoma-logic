@@ -170,6 +170,46 @@ bool FXiaomaPuzzleTest::RunTest(const FString& Parameters)
     TestNotEqual(TEXT("Fingerprint tracks gate switch"),
         FXiaomaPuzzle::AdventureFingerprint(OtherSwitch), FXiaomaPuzzle::AdventureFingerprint(Gated));
 
+    // 组合宝箱：每只宝箱至少一段；第 22 关是「石碑 -> 符文」两段链
+    int32 TotalChests = 0;
+    for (const FXiaomaLevel& Level : Levels)
+    {
+        for (const FXiaomaChestDef& Chest : Level.Adventure.Chests)
+        {
+            ++TotalChests;
+            TestTrue(FString::Printf(TEXT("Level %d chest has at least one stage"), Level.Id),
+                Chest.NumStages() >= 1);
+            TestTrue(FString::Printf(TEXT("Level %d chest has at most three stages"), Level.Id),
+                Chest.NumStages() <= 3);
+        }
+    }
+    TestTrue(TEXT("Levels carry chests"), TotalChests >= 20);
+    if (Levels[21].Adventure.Chests.Num() == 1)
+    {
+        const FXiaomaChestDef& Chain = Levels[21].Adventure.Chests[0];
+        TestEqual(TEXT("Level 22 chest stage count"), Chain.NumStages(), 2);
+        if (Chain.NumStages() == 2)
+        {
+            TestTrue(TEXT("Level 22 first stage is stele"),
+                Chain.StageAt(0).PuzzleType == EXiaomaChestPuzzleType::Stele);
+            TestTrue(TEXT("Level 22 second stage is runes"),
+                Chain.StageAt(1).PuzzleType == EXiaomaChestPuzzleType::Runes);
+            TestEqual(TEXT("Level 22 rune count"), Chain.StageAt(1).RuneOrder.Num(), 2);
+            TestEqual(TEXT("Level 22 stele cell row"), Chain.StageAt(0).SteleCell.X, 3);
+            TestEqual(TEXT("Level 22 stele cell column"), Chain.StageAt(0).SteleCell.Y, 1);
+            TestTrue(TEXT("Level 22 stele has clue text"), !Chain.StageAt(0).ClueText.IsEmpty());
+        }
+    }
+    // 段数进指纹：加一段等于改了开箱方式，旧续局必须失效
+    FXiaomaLevel Chained = Levels[21];
+    if (Chained.Adventure.Chests.Num() == 1)
+    {
+        const int32 ChainFingerprint = FXiaomaPuzzle::AdventureFingerprint(Chained);
+        Chained.Adventure.Chests[0].Stages.Add(FXiaomaChestStage());
+        TestNotEqual(TEXT("Fingerprint tracks chest stage count"),
+            FXiaomaPuzzle::AdventureFingerprint(Chained), ChainFingerprint);
+    }
+
     // 续局判定：关卡、格数、生命、布局指纹任一条不对就不续
     UXiaomaSaveGame* Round = NewObject<UXiaomaSaveGame>();
     Round->MigrateLevelRevision();

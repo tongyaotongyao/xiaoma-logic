@@ -78,8 +78,16 @@ AXiaomaChest::AXiaomaChest()
 void AXiaomaChest::SetupChest(const FXiaomaChestDef& InDef, const FVector& WorldLocation)
 {
     Def = InDef;
-    bUnlocked = false;
     bClaimed = false;
+    StageIndex = 0;
+    // 校验工具保证至少一段，运行时再兜一层，避免空数组导致后续全部越界
+    if (Def.Stages.Num() == 0)
+    {
+        Def.Stages.Add(FXiaomaChestStage());
+    }
+    StageProgress.Init(0, Def.Stages.Num());
+    StageVisuals.Reset();
+    StageVisuals.SetNum(Def.Stages.Num());
     SetActorLocation(WorldLocation);
 
     UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -114,17 +122,11 @@ void AXiaomaChest::SetupChest(const FXiaomaChestDef& InDef, const FVector& World
         GemMesh->SetMaterial(0, GemMaterial);
     }
 
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Runes)
+    // 每段的部件一次建好：后续段先压暗放着，轮到它再点亮，
+    // 这样玩家从头就能看见"这关有几道锁"，也不至于提前踩到却毫无反馈。
+    for (int32 Index = 0; Index < Def.Stages.Num(); ++Index)
     {
-        BuildRuneVisuals();
-    }
-    else if (Def.PuzzleType == EXiaomaChestPuzzleType::Stele)
-    {
-        BuildSteleVisuals();
-    }
-    else if (Def.PuzzleType == EXiaomaChestPuzzleType::Push)
-    {
-        BuildPushVisuals();
+        BuildStageVisuals(Index);
     }
 
     RefreshVisuals();
@@ -134,7 +136,8 @@ void AXiaomaChest::OnBoardChanged(const FXiaomaLevel& Level, const TArray<uint8>
 {
     // 只有规则开箱看棋盘；符文、石碑、推箱各有自己的触发路径。
     // 少了这道判断，推箱宝箱会拿默认的 RuleType 去套行规则，摆对某一行就自己开了。
-    if (Def.PuzzleType != EXiaomaChestPuzzleType::Rule)
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (!Stage || Stage->PuzzleType != EXiaomaChestPuzzleType::Rule)
     {
         return;
     }
@@ -143,22 +146,24 @@ void AXiaomaChest::OnBoardChanged(const FXiaomaLevel& Level, const TArray<uint8>
         return;
     }
     bool bSatisfied = false;
-    if (Def.RuleType == EXiaomaChestRuleType::Row)
+    const EXiaomaChestRuleType RuleType = Stage->RuleType;
+    const int32 RuleIndex = Stage->RuleIndex;
+    if (RuleType == EXiaomaChestRuleType::Row)
     {
-        const int32 SolCol = Level.SolutionColumns.IsValidIndex(Def.RuleIndex)
-            ? Level.SolutionColumns[Def.RuleIndex] : -1;
+        const int32 SolCol = Level.SolutionColumns.IsValidIndex(RuleIndex)
+            ? Level.SolutionColumns[RuleIndex] : -1;
         if (SolCol >= 0)
         {
-            bSatisfied = Cells[Def.RuleIndex * FXiaomaPuzzle::Size + SolCol] == 2;
+            bSatisfied = Cells[RuleIndex * FXiaomaPuzzle::Size + SolCol] == 2;
         }
     }
-    else if (Def.RuleType == EXiaomaChestRuleType::Column)
+    else if (RuleType == EXiaomaChestRuleType::Column)
     {
         for (int32 Row = 0; Row < FXiaomaPuzzle::Size; ++Row)
         {
-            if (Level.SolutionColumns.IsValidIndex(Row) && Level.SolutionColumns[Row] == Def.RuleIndex)
+            if (Level.SolutionColumns.IsValidIndex(Row) && Level.SolutionColumns[Row] == RuleIndex)
             {
-                bSatisfied = Cells[Row * FXiaomaPuzzle::Size + Def.RuleIndex] == 2;
+                bSatisfied = Cells[Row * FXiaomaPuzzle::Size + RuleIndex] == 2;
                 break;
             }
         }
@@ -168,7 +173,7 @@ void AXiaomaChest::OnBoardChanged(const FXiaomaLevel& Level, const TArray<uint8>
         for (int32 Row = 0; Row < FXiaomaPuzzle::Size; ++Row)
         {
             const int32 Col = Level.SolutionColumns.IsValidIndex(Row) ? Level.SolutionColumns[Row] : -1;
-            if (Col >= 0 && Level.RegionAt(Row, Col) == Def.RuleIndex)
+            if (Col >= 0 && Level.RegionAt(Row, Col) == RuleIndex)
             {
                 bSatisfied = Cells[Row * FXiaomaPuzzle::Size + Col] == 2;
                 break;
@@ -176,10 +181,9 @@ void AXiaomaChest::OnBoardChanged(const FXiaomaLevel& Level, const TArray<uint8>
         }
     }
 
-    if (bSatisfied && !bUnlocked)
+    if (bSatisfied && !IsStageComplete(StageIndex))
     {
-        bUnlocked = true;
-        RefreshVisuals();
+        CompleteActiveStage();
     }
 }
 
@@ -189,11 +193,17 @@ void AXiaomaChest::OnHerdsmanEnterCell(FIntPoint Cell)
     {
         return;
     }
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Runes)
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (Stage && Stage->PuzzleType == EXiaomaChestPuzzleType::Runes)
     {
         HandleRuneStep(Cell);
     }
-    if (Cell == Def.Cell && bUnlocked && !bClaimed)
+    else if (IsFutureRuneCell(Cell))
+    {
+        // 踩到后面才轮到的符文：给个明确反馈，别让玩家以为踩了没反应
+        OnChestNotice.ExecuteIfBound(TEXT("这个符文还没醒——先把前面那道锁打开"), false);
+    }
+    if (Cell == Def.Cell && IsUnlocked() && !bClaimed)
     {
         TryClaim();
     }
@@ -205,34 +215,45 @@ bool AXiaomaChest::TryInteract(FIntPoint Cell)
     {
         return false;
     }
-    // 石碑格：按 E 读线索（读过再按仍然给提示，避免误开轮盘）
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Stele && Cell == Def.SteleCell)
+    // 任一阶段的石碑格：按 E 读线索（已完成阶段的石碑也还能念，当参考）
+    if (const FXiaomaChestStage* SteleStage = FindSteleStage(Cell))
     {
-        bSteleRead = true;
-        RefreshVisuals();
+        const FXiaomaChestStage* Active = GetActiveStage();
+        if (SteleStage == Active && !SteleStage->ClueText.IsEmpty())
+        {
+            // 只有轮到这一段时，"读过"才记进度
+            if (StageProgress.IsValidIndex(StageIndex) && StageProgress[StageIndex] < 1)
+            {
+                StageProgress[StageIndex] = 1;
+            }
+            RefreshVisuals();
+        }
         return true;
     }
     if (Cell != Def.Cell)
     {
         return false;
     }
-    // 石碑宝箱：读过线索才能挖
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Stele && !bDug)
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    // 石碑段：读过线索才能挖，挖出来这一段就完成
+    if (Stage && Stage->PuzzleType == EXiaomaChestPuzzleType::Stele)
     {
-        if (bSteleRead)
+        const uint8 Progress = StageProgress.IsValidIndex(StageIndex) ? StageProgress[StageIndex] : 0;
+        if (Progress < 2)
         {
-            bDug = true;
-            bUnlocked = true;
-            RefreshVisuals();
-            OnChestNotice.ExecuteIfBound(TEXT("挖出了宝箱，再按一次 E 领取"), true);
+            if (Progress >= 1)
+            {
+                // 先挖出来再推进段，提示里带上"挖出了宝箱"
+                CompleteActiveStage(TEXT("挖出了宝箱"));
+            }
+            else
+            {
+                OnChestNotice.ExecuteIfBound(TEXT("这里埋着东西，但还不知道埋在哪——先去找石碑"), false);
+            }
+            return true;
         }
-        else
-        {
-            OnChestNotice.ExecuteIfBound(TEXT("这里埋着东西，但还不知道埋在哪——先去找石碑"), false);
-        }
-        return true;
     }
-    if (bUnlocked)
+    if (IsUnlocked())
     {
         TryClaim();
         return true;
@@ -243,41 +264,145 @@ bool AXiaomaChest::TryInteract(FIntPoint Cell)
 
 void AXiaomaChest::HandleRuneStep(FIntPoint Cell)
 {
-    if (bUnlocked || Def.RuneOrder.Num() == 0)
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (!Stage || Stage->PuzzleType != EXiaomaChestPuzzleType::Runes
+        || Stage->RuneOrder.Num() == 0 || !StageProgress.IsValidIndex(StageIndex))
     {
         return;
     }
-    const int32 Index = Def.RuneOrder.IndexOfByKey(Cell);
+    const int32 Index = Stage->RuneOrder.IndexOfByKey(Cell);
     if (Index == INDEX_NONE)
     {
         return;
     }
-    if (Index == RuneProgress)
+    const int32 Progress = StageProgress[StageIndex];
+    if (Index == Progress)
     {
-        ++RuneProgress;
-        if (RuneProgress >= Def.RuneOrder.Num())
+        ++StageProgress[StageIndex];
+        if (StageProgress[StageIndex] >= Stage->RuneOrder.Num())
         {
-            bUnlocked = true;
-            RefreshVisuals();
-            OnChestNotice.ExecuteIfBound(TEXT("符文全部点亮，宝箱打开了"), true);
+            CompleteActiveStage();
             return;
         }
     }
-    else if (Index > RuneProgress)
+    else if (Index > Progress)
     {
-        // 踩错顺序：已经亮的全部熄灭
-        RuneProgress = 0;
+        // 踩错顺序：这一段已经亮的全部熄灭
+        StageProgress[StageIndex] = 0;
         OnChestNotice.ExecuteIfBound(TEXT("顺序错了，符文全部熄灭"), false);
-        RefreshVisuals();
     }
-    // Index < RuneProgress 表示重复踩已经亮过的符文，忽略
-    RefreshRuneVisuals();
+    // Index < Progress 表示重复踩已经亮过的符文，忽略
+    RefreshRuneVisuals(StageIndex);
     RefreshVisuals();
 }
 
 bool AXiaomaChest::IsBuried() const
 {
-    return Def.PuzzleType == EXiaomaChestPuzzleType::Stele && !bDug && !bClaimed;
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (!Stage || bClaimed || Stage->PuzzleType != EXiaomaChestPuzzleType::Stele)
+    {
+        return false;
+    }
+    const uint8 Progress = StageProgress.IsValidIndex(StageIndex) ? StageProgress[StageIndex] : 0;
+    return Progress < 2;
+}
+
+const FXiaomaChestStage* AXiaomaChest::GetActiveStage() const
+{
+    return Def.Stages.IsValidIndex(StageIndex) ? &Def.Stages[StageIndex] : nullptr;
+}
+
+const FXiaomaChestStage* AXiaomaChest::FindSteleStage(FIntPoint Cell) const
+{
+    for (const FXiaomaChestStage& Stage : Def.Stages)
+    {
+        if (Stage.PuzzleType == EXiaomaChestPuzzleType::Stele && Stage.SteleCell == Cell)
+        {
+            return &Stage;
+        }
+    }
+    return nullptr;
+}
+
+bool AXiaomaChest::IsPushStageActive() const
+{
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    return Stage && Stage->PuzzleType == EXiaomaChestPuzzleType::Push;
+}
+
+FIntPoint AXiaomaChest::GetActivePlate() const
+{
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    return Stage && Stage->PuzzleType == EXiaomaChestPuzzleType::Push
+        ? Stage->PushPlate : FIntPoint(-1, -1);
+}
+
+bool AXiaomaChest::IsFutureRuneCell(FIntPoint Cell) const
+{
+    for (int32 Index = StageIndex + 1; Index < Def.Stages.Num(); ++Index)
+    {
+        const FXiaomaChestStage& Stage = Def.Stages[Index];
+        if (Stage.PuzzleType == EXiaomaChestPuzzleType::Runes && Stage.RuneOrder.Contains(Cell))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+int32 AXiaomaChest::MaxProgressForStage(const FXiaomaChestStage& Stage)
+{
+    if (Stage.PuzzleType == EXiaomaChestPuzzleType::Runes)
+    {
+        return FMath::Max(1, Stage.RuneOrder.Num());
+    }
+    if (Stage.PuzzleType == EXiaomaChestPuzzleType::Stele)
+    {
+        return 2;
+    }
+    return 1;
+}
+
+bool AXiaomaChest::IsStageComplete(int32 Index) const
+{
+    if (!Def.Stages.IsValidIndex(Index) || !StageProgress.IsValidIndex(Index))
+    {
+        return false;
+    }
+    return StageProgress[Index] >= MaxProgressForStage(Def.Stages[Index]);
+}
+
+void AXiaomaChest::CompleteActiveStage(const FString& Prefix)
+{
+    if (!Def.Stages.IsValidIndex(StageIndex))
+    {
+        return;
+    }
+    const FXiaomaChestStage& Stage = Def.Stages[StageIndex];
+    if (StageProgress.IsValidIndex(StageIndex))
+    {
+        StageProgress[StageIndex] = static_cast<uint8>(MaxProgressForStage(Stage));
+    }
+    ++StageIndex;
+    RefreshVisuals();
+
+    FString Message;
+    if (StageIndex < Def.Stages.Num())
+    {
+        const FString Next = BuildPrompt();
+        Message = Next.IsEmpty()
+            ? FString::Printf(TEXT("第 %d/%d 道锁开了"), StageIndex, Def.Stages.Num())
+            : FString::Printf(TEXT("第 %d/%d 道锁开了——%s"), StageIndex, Def.Stages.Num(), *Next);
+    }
+    else
+    {
+        Message = TEXT("最后一道锁开了，宝箱打开了");
+    }
+    if (!Prefix.IsEmpty())
+    {
+        Message = FString::Printf(TEXT("%s——%s"), *Prefix, *Message);
+    }
+    OnChestNotice.ExecuteIfBound(Message, true);
 }
 
 FVector AXiaomaChest::OffsetFromChest(FIntPoint Cell) const
@@ -287,145 +412,153 @@ FVector AXiaomaChest::OffsetFromChest(FIntPoint Cell) const
         (Def.Cell.X - Cell.X) * MechCellStep, 0.f);
 }
 
-void AXiaomaChest::BuildRuneVisuals()
+void AXiaomaChest::BuildStageVisuals(int32 StageNum)
 {
-    UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
-    UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    if (!Cylinder || !Cube || !Sphere || !SceneRoot)
+    if (!Def.Stages.IsValidIndex(StageNum) || !StageVisuals.IsValidIndex(StageNum) || !SceneRoot)
     {
         return;
     }
+    const FXiaomaChestStage& Stage = Def.Stages[StageNum];
+    FXiaomaChestStageVisuals& V = Visuals(StageNum);
 
-    const int32 Count = FMath::Min(Def.RuneOrder.Num(), 4);
+    UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+    UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 
-    // 盖子上方一排小宝石：从左到右就是踩亮顺序
-    for (int32 Index = 0; Index < Count; ++Index)
+    if (Stage.PuzzleType == EXiaomaChestPuzzleType::Runes)
     {
-        UMaterialInstanceDynamic* Mat = nullptr;
-        UStaticMeshComponent* Gem = AddMeshPart(this, SceneRoot, TEXT("OrderGem"),
-            Sphere, FVector((Index - (Count - 1) * 0.5f) * 12.f, -14.f, 54.f),
-            FVector(0.085f), RuneColours[Index % 4], &Mat);
-        OrderGems.Add(Gem);
-    }
-
-    // 场上的符文格：一块圆盘 + 中间一个菱形印记，两者共用材质，一起变亮变暗
-    for (int32 Index = 0; Index < Count; ++Index)
-    {
-        const FVector Offset = OffsetFromChest(Def.RuneOrder[Index]);
-        UMaterialInstanceDynamic* Mat = nullptr;
-        UStaticMeshComponent* Disc = AddMeshPart(this, SceneRoot, TEXT("RuneDisc"),
-            Cylinder, Offset + FVector(0.f, 0.f, 17.f), FVector(0.30f, 0.30f, 0.02f),
-            RuneColours[Index % 4], &Mat);
-        UStaticMeshComponent* Glyph = AddMeshPart(this, SceneRoot, TEXT("RuneGlyph"),
-            Cube, Offset + FVector(0.f, 0.f, 19.f), FVector(0.15f, 0.15f, 0.015f),
-            RuneColours[Index % 4], nullptr);
-        Glyph->SetRelativeRotation(FRotator(0.f, 45.f, 0.f));
-        if (Mat)
+        if (!Cylinder || !Cube || !Sphere)
         {
-            Glyph->SetMaterial(0, Mat);
+            return;
         }
-        RuneDiscs.Add(Disc);
-        RuneGlyphs.Add(Glyph);
-        RuneMaterials.Add(Mat);
+        const int32 Count = FMath::Min(Stage.RuneOrder.Num(), 4);
+
+        // 盖子上方一排小宝石：从左到右就是踩亮顺序
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            UMaterialInstanceDynamic* Mat = nullptr;
+            UStaticMeshComponent* Gem = AddMeshPart(this, SceneRoot, TEXT("OrderGem"),
+                Sphere, FVector((Index - (Count - 1) * 0.5f) * 12.f, -14.f, 54.f),
+                FVector(0.085f), RuneColours[Index % 4], &Mat);
+            V.OrderGems.Add(Gem);
+        }
+
+        // 场上的符文格：一块圆盘 + 中间一个菱形印记，两者共用材质，一起变亮变暗
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            const FVector Offset = OffsetFromChest(Stage.RuneOrder[Index]);
+            UMaterialInstanceDynamic* Mat = nullptr;
+            UStaticMeshComponent* Disc = AddMeshPart(this, SceneRoot, TEXT("RuneDisc"),
+                Cylinder, Offset + FVector(0.f, 0.f, 17.f), FVector(0.30f, 0.30f, 0.02f),
+                RuneColours[Index % 4], &Mat);
+            UStaticMeshComponent* Glyph = AddMeshPart(this, SceneRoot, TEXT("RuneGlyph"),
+                Cube, Offset + FVector(0.f, 0.f, 19.f), FVector(0.15f, 0.15f, 0.015f),
+                RuneColours[Index % 4], nullptr);
+            Glyph->SetRelativeRotation(FRotator(0.f, 45.f, 0.f));
+            if (Mat)
+            {
+                Glyph->SetMaterial(0, Mat);
+            }
+            V.RuneDiscs.Add(Disc);
+            V.RuneGlyphs.Add(Glyph);
+            V.RuneMaterials.Add(Mat);
+        }
+    }
+    else if (Stage.PuzzleType == EXiaomaChestPuzzleType::Stele)
+    {
+        if (!Cube || !Sphere || Stage.SteleCell.X < 0)
+        {
+            return;
+        }
+        const FVector Offset = OffsetFromChest(Stage.SteleCell);
+        V.SteleBase = AddMeshPart(this, SceneRoot, TEXT("SteleBase"), Cube,
+            Offset + FVector(0.f, 0.f, 12.f), FVector(0.30f, 0.22f, 0.07f), FColor(146, 143, 136), nullptr);
+        V.SteleSlab = AddMeshPart(this, SceneRoot, TEXT("SteleSlab"), Cube,
+            Offset + FVector(0.f, 0.f, 44.f), FVector(0.17f, 0.09f, 0.40f), FColor(180, 177, 168), nullptr);
+        V.SteleGlyph = AddMeshPart(this, SceneRoot, TEXT("SteleGlyph"), Sphere,
+            Offset + FVector(0.f, 0.f, 74.f), FVector(0.09f, 0.09f, 0.13f), FColor(255, 214, 96), nullptr);
+
+        // 埋藏点提示：读过石碑后才亮起，告诉玩家挖哪里
+        UMaterialInstanceDynamic* MarkerMaterial = nullptr;
+        V.DigMarker = AddMeshPart(this, SceneRoot, TEXT("DigMarker"), Cube,
+            FVector(0.f, 0.f, 17.f), FVector(0.60f, 0.60f, 0.015f), FColor(255, 214, 120), &MarkerMaterial);
+        V.DigMarker->SetRelativeRotation(FRotator(0.f, 45.f, 0.f));
+        V.DigMaterial = MarkerMaterial;
+    }
+    else if (Stage.PuzzleType == EXiaomaChestPuzzleType::Push)
+    {
+        if (!Cylinder || !Cube || Stage.PushPlate.X < 0)
+        {
+            return;
+        }
+        // 压力板画在宝箱 Actor 下、按格差偏移，所以箱子推动时它不会跟着跑。
+        // 高度必须踩在地板顶面上：地板顶面约在 z = 8（小马就摆在 z = 10），
+        // 原先画在 z = 2、厚 4 个单位，整块埋在地板里，玩家根本看不到。
+        const FVector Offset = OffsetFromChest(Stage.PushPlate);
+        UMaterialInstanceDynamic* PadMaterial = nullptr;
+        UMaterialInstanceDynamic* GlowMaterial = nullptr;
+
+        // 底盘：一块厚圆饼，压住时整块由冷灰转暖色
+        V.PlatePad = AddMeshPart(this, SceneRoot, TEXT("PlatePad"), Cylinder,
+            Offset + FVector(0.f, 0.f, 9.f), FVector(0.86f, 0.86f, 0.14f), FColor(92, 96, 104), &PadMaterial);
+
+        // 四角铆钉：让这一格一眼看出是机关，而不是地板的深色贴图
+        for (int32 Bolt = 0; Bolt < 4; ++Bolt)
+        {
+            const float SignX = (Bolt & 1) ? 1.f : -1.f;
+            const float SignY = (Bolt & 2) ? 1.f : -1.f;
+            AddMeshPart(this, SceneRoot, TEXT("PlateBolt"), Cube,
+                Offset + FVector(SignX * 24.f, SignY * 24.f, 16.f),
+                FVector(0.06f, 0.06f, 0.06f), FColor(58, 62, 70), nullptr);
+        }
+
+        // 中央指示片：没压住是暗铜色，压住后变亮，兼作「箱子该推到哪儿」的目标点
+        V.PlateGlow = AddMeshPart(this, SceneRoot, TEXT("PlateGlow"), Cylinder,
+            Offset + FVector(0.f, 0.f, 16.6f), FVector(0.52f, 0.52f, 0.04f), FColor(96, 78, 46), &GlowMaterial);
+
+        V.PlateMaterial = PadMaterial;
+        V.PlateGlowMaterial = GlowMaterial;
+        if (V.PlatePad) V.PlatePad->SetCastShadow(true);
+        if (V.PlateGlow) V.PlateGlow->SetCastShadow(false);
     }
 }
 
-void AXiaomaChest::BuildSteleVisuals()
+void AXiaomaChest::RefreshRuneVisuals(int32 StageNum)
 {
-    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
-    UStaticMesh* Sphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    if (!Cube || !Sphere || !SceneRoot || Def.SteleCell.X < 0)
+    if (!Def.Stages.IsValidIndex(StageNum) || !StageVisuals.IsValidIndex(StageNum))
     {
         return;
     }
-
-    const FVector Offset = OffsetFromChest(Def.SteleCell);
-    SteleBase = AddMeshPart(this, SceneRoot, TEXT("SteleBase"), Cube,
-        Offset + FVector(0.f, 0.f, 12.f), FVector(0.30f, 0.22f, 0.07f), FColor(146, 143, 136), nullptr);
-    SteleSlab = AddMeshPart(this, SceneRoot, TEXT("SteleSlab"), Cube,
-        Offset + FVector(0.f, 0.f, 44.f), FVector(0.17f, 0.09f, 0.40f), FColor(180, 177, 168), nullptr);
-    SteleGlyph = AddMeshPart(this, SceneRoot, TEXT("SteleGlyph"), Sphere,
-        Offset + FVector(0.f, 0.f, 74.f), FVector(0.09f, 0.09f, 0.13f), FColor(255, 214, 96), nullptr);
-
-    // 埋藏点提示：读过石碑后才亮起，告诉玩家挖哪里
-    UMaterialInstanceDynamic* MarkerMaterial = nullptr;
-    DigMarker = AddMeshPart(this, SceneRoot, TEXT("DigMarker"), Cube,
-        FVector(0.f, 0.f, 17.f), FVector(0.60f, 0.60f, 0.015f), FColor(255, 214, 120), &MarkerMaterial);
-    DigMarker->SetRelativeRotation(FRotator(0.f, 45.f, 0.f));
-    DigMaterial = MarkerMaterial;
-}
-
-void AXiaomaChest::BuildPushVisuals()
-{
-    UStaticMesh* Cylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-    UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
-    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr,
-        TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-    if (!Cylinder || !Cube || !BaseMat || !SceneRoot || Def.PushPlate.X < 0)
+    const FXiaomaChestStage& Stage = Def.Stages[StageNum];
+    if (Stage.PuzzleType != EXiaomaChestPuzzleType::Runes)
     {
         return;
     }
-
-    // 压力板画在宝箱 Actor 下、按格差偏移，所以箱子推动时它不会跟着跑。
-    // 高度必须踩在地板顶面上：地板顶面约在 z = 8（小马就摆在 z = 10），
-    // 原先画在 z = 2、厚 4 个单位，整块埋在地板里，玩家根本看不到。
-    const FVector Offset = OffsetFromChest(Def.PushPlate);
-    UMaterialInstanceDynamic* PadMaterial = nullptr;
-    UMaterialInstanceDynamic* GlowMaterial = nullptr;
-
-    // 底盘：一块厚圆饼，压住时整块由冷灰转暖色
-    PlatePad = AddMeshPart(this, SceneRoot, TEXT("PlatePad"), Cylinder,
-        Offset + FVector(0.f, 0.f, 9.f), FVector(0.86f, 0.86f, 0.14f), FColor(92, 96, 104), &PadMaterial);
-
-    // 四角铆钉：让这一格一眼看出是机关，而不是地板的深色贴图
-    for (int32 Index = 0; Index < 4; ++Index)
+    FXiaomaChestStageVisuals& V = Visuals(StageNum);
+    // 已经做完的段整片点亮；当前段按进度点亮；还没轮到的段全暗，表示"未激活"
+    const bool bDone = StageNum < StageIndex;
+    const int32 Progress = StageProgress.IsValidIndex(StageNum) ? StageProgress[StageNum] : 0;
+    for (int32 Index = 0; Index < V.RuneMaterials.Num(); ++Index)
     {
-        const float SignX = (Index & 1) ? 1.f : -1.f;
-        const float SignY = (Index & 2) ? 1.f : -1.f;
-        AddMeshPart(this, SceneRoot, TEXT("PlateBolt"), Cube,
-            Offset + FVector(SignX * 24.f, SignY * 24.f, 16.f),
-            FVector(0.06f, 0.06f, 0.06f), FColor(58, 62, 70), nullptr);
-    }
-
-    // 中央指示片：没压住是暗铜色，压住后变亮，兼作「箱子该推到哪儿」的目标点
-    PlateGlow = AddMeshPart(this, SceneRoot, TEXT("PlateGlow"), Cylinder,
-        Offset + FVector(0.f, 0.f, 16.6f), FVector(0.52f, 0.52f, 0.04f), FColor(96, 78, 46), &GlowMaterial);
-
-    PlateMaterial = PadMaterial;
-    PlateGlowMaterial = GlowMaterial;
-    if (PlatePad) PlatePad->SetCastShadow(true);
-    if (PlateGlow) PlateGlow->SetCastShadow(false);
-    SetPlatePressed(false);
-}
-
-void AXiaomaChest::RefreshRuneVisuals()
-{
-    if (Def.PuzzleType != EXiaomaChestPuzzleType::Runes)
-    {
-        return;
-    }
-    for (int32 Index = 0; Index < RuneMaterials.Num(); ++Index)
-    {
-        const bool bLit = bUnlocked || Index < RuneProgress;
+        const bool bLit = bDone || (StageNum == StageIndex && Index < Progress);
         FLinearColor Colour(RuneColours[Index % 4]);
         if (!bLit)
         {
             Colour *= 0.30f;
         }
-        if (RuneMaterials[Index])
+        if (V.RuneMaterials[Index])
         {
-            RuneMaterials[Index]->SetVectorParameterValue(TEXT("Color"), Colour);
+            V.RuneMaterials[Index]->SetVectorParameterValue(TEXT("Color"), Colour);
         }
-        if (RuneDiscs.IsValidIndex(Index) && RuneDiscs[Index])
+        if (V.RuneDiscs.IsValidIndex(Index) && V.RuneDiscs[Index])
         {
-            const FVector Loc = RuneDiscs[Index]->GetRelativeLocation();
-            RuneDiscs[Index]->SetRelativeLocation(FVector(Loc.X, Loc.Y, bLit ? 18.2f : 17.f));
+            const FVector Loc = V.RuneDiscs[Index]->GetRelativeLocation();
+            V.RuneDiscs[Index]->SetRelativeLocation(FVector(Loc.X, Loc.Y, bLit ? 18.2f : 17.f));
         }
-        if (RuneGlyphs.IsValidIndex(Index) && RuneGlyphs[Index])
+        if (V.RuneGlyphs.IsValidIndex(Index) && V.RuneGlyphs[Index])
         {
-            const FVector Loc = RuneGlyphs[Index]->GetRelativeLocation();
-            RuneGlyphs[Index]->SetRelativeLocation(FVector(Loc.X, Loc.Y, bLit ? 20.2f : 19.f));
+            const FVector Loc = V.RuneGlyphs[Index]->GetRelativeLocation();
+            V.RuneGlyphs[Index]->SetRelativeLocation(FVector(Loc.X, Loc.Y, bLit ? 20.2f : 19.f));
         }
     }
 }
@@ -436,70 +569,89 @@ FString AXiaomaChest::BuildPrompt() const
     {
         return FString();
     }
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Runes)
+    if (IsUnlocked())
     {
-        if (bUnlocked)
-        {
-            return TEXT("符文全部点亮，按 E 领取提示星");
-        }
-        return FString::Printf(TEXT("符文宝箱上锁中：按宝箱上方的颜色顺序踩亮符文（%d/%d）"),
-            RuneProgress, Def.RuneOrder.Num());
+        return FString::Printf(TEXT("宝箱已经打开，按 E 领取%s"),
+            Def.Reward == EXiaomaItemType::Hint ? TEXT("提示星") : TEXT("奖励"));
     }
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Stele)
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (!Stage)
     {
-        if (bDug)
-        {
-            return TEXT("宝箱已经挖出来了，按 E 领取提示星");
-        }
-        if (bSteleRead)
-        {
-            return TEXT("按石碑的线索走到发光的位置，按 E 挖开");
-        }
-        return TEXT("宝箱埋在土里：先去场上的石碑按 E 读线索");
+        return FString();
     }
-    if (Def.PuzzleType == EXiaomaChestPuzzleType::Push)
+    FString Body;
+    const int32 Progress = StageProgress.IsValidIndex(StageIndex) ? StageProgress[StageIndex] : 0;
+    if (Stage->PuzzleType == EXiaomaChestPuzzleType::Runes)
     {
-        if (bUnlocked)
-        {
-            return TEXT("木箱压住了压力板，按 E 领取提示星");
-        }
-        return TEXT("推箱宝箱：把场上的木箱推到铁制压力板上，宝箱就会弹开");
+        Body = FString::Printf(TEXT("按宝箱上方的颜色顺序踩亮符文（%d/%d）"),
+            Progress, Stage->RuneOrder.Num());
     }
-    const TCHAR* RuleText = Def.RuleType == EXiaomaChestRuleType::Row ? TEXT("对应行")
-        : (Def.RuleType == EXiaomaChestRuleType::Column ? TEXT("对应列") : TEXT("对应颜色区域"));
-    return FString::Printf(TEXT("宝箱上锁中：在%s第 %d 格放对小马即可开启"), RuleText, Def.RuleIndex + 1);
+    else if (Stage->PuzzleType == EXiaomaChestPuzzleType::Stele)
+    {
+        Body = Progress >= 1
+            ? FString(TEXT("按石碑的线索走到发光的位置，按 E 挖开"))
+            : FString(TEXT("宝箱埋在土里：先去场上的石碑按 E 读线索"));
+    }
+    else if (Stage->PuzzleType == EXiaomaChestPuzzleType::Push)
+    {
+        Body = FString(TEXT("把场上的木箱推到铁制压力板上"));
+    }
+    else
+    {
+        const TCHAR* RuleText = Stage->RuleType == EXiaomaChestRuleType::Row ? TEXT("对应行")
+            : (Stage->RuleType == EXiaomaChestRuleType::Column ? TEXT("对应列") : TEXT("对应颜色区域"));
+        Body = FString::Printf(TEXT("在%s第 %d 格放对小马即可开启"), RuleText, Stage->RuleIndex + 1);
+    }
+    // 多段宝箱把「第几道锁」写在前面，玩家一眼知道还剩几步
+    if (Def.Stages.Num() > 1)
+    {
+        return FString::Printf(TEXT("第 %d/%d 道锁：%s"), StageIndex + 1, Def.Stages.Num(), *Body);
+    }
+    return FString::Printf(TEXT("宝箱上锁中：%s"), *Body);
 }
 
 void AXiaomaChest::UnlockByMechanism()
 {
-    if (bUnlocked || bClaimed)
+    // 只有当前段是推箱时才认这块压力板；不是的话说明这把锁另有解法
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (!Stage || Stage->PuzzleType != EXiaomaChestPuzzleType::Push || bClaimed)
     {
         return;
     }
-    bUnlocked = true;
-    RefreshVisuals();
+    if (!IsStageComplete(StageIndex))
+    {
+        CompleteActiveStage();
+    }
 }
 
 void AXiaomaChest::SetPlatePressed(bool bPressed)
 {
-    bPlatePressed = bPressed;
-    if (PlateMaterial)
+    // 压力板只在推箱段显示，别的段没有这块盘，直接跳过
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    if (!Stage || Stage->PuzzleType != EXiaomaChestPuzzleType::Push
+        || !StageVisuals.IsValidIndex(StageIndex))
+    {
+        return;
+    }
+    FXiaomaChestStageVisuals& V = Visuals(StageIndex);
+    V.bPlatePressed = bPressed;
+    if (V.PlateMaterial)
     {
         // 压住时铁盘变暖色，没压住是冷灰
-        PlateMaterial->SetVectorParameterValue(TEXT("Color"),
+        V.PlateMaterial->SetVectorParameterValue(TEXT("Color"),
             bPressed ? FLinearColor(FColor(226, 182, 92)) : FLinearColor(FColor(92, 96, 104)));
     }
-    if (PlateGlowMaterial)
+    if (V.PlateGlowMaterial)
     {
         // 中央指示片常亮，只有暗/亮两档：不压住时也要能看见压力板在哪
-        PlateGlowMaterial->SetVectorParameterValue(TEXT("Color"),
+        V.PlateGlowMaterial->SetVectorParameterValue(TEXT("Color"),
             bPressed ? FLinearColor(FColor(255, 214, 96)) : FLinearColor(FColor(96, 78, 46)));
     }
 }
 
 void AXiaomaChest::TryClaim()
 {
-    if (!bUnlocked || bClaimed || bClaiming)
+    if (!IsUnlocked() || bClaimed || bClaiming)
     {
         return;
     }
@@ -517,19 +669,21 @@ void AXiaomaChest::RefreshVisuals()
 {
     const bool bBuried = IsBuried();
     const bool bShowChest = !bClaimed && !bBuried;
+    const bool bAllStagesDone = IsUnlocked();
+    const FXiaomaChestStage* ActiveStage = GetActiveStage();
 
     if (GemMaterial)
     {
         FLinearColor GemColor = FLinearColor(FColor(140, 140, 140));
-        if (bUnlocked && !bClaimed)
+        if (bAllStagesDone && !bClaimed)
         {
             GemColor = FLinearColor(FColor(255, 215, 70));
         }
-        else if (Def.PuzzleType == EXiaomaChestPuzzleType::Rule
-            && Def.RuleType == EXiaomaChestRuleType::Region
-            && Def.RuleIndex >= 0 && Def.RuleIndex < 6)
+        else if (ActiveStage && ActiveStage->PuzzleType == EXiaomaChestPuzzleType::Rule
+            && ActiveStage->RuleType == EXiaomaChestRuleType::Region
+            && ActiveStage->RuleIndex >= 0 && ActiveStage->RuleIndex < 6)
         {
-            GemColor = XiaomaPalette::Regions[Def.RuleIndex];
+            GemColor = XiaomaPalette::Regions[ActiveStage->RuleIndex];
         }
         GemMaterial->SetVectorParameterValue(TEXT("Color"), GemColor);
     }
@@ -539,27 +693,39 @@ void AXiaomaChest::RefreshVisuals()
     }
     if (LidMesh)
     {
-        LidMesh->SetRelativeLocation(bUnlocked ? FVector(0.f, 14.f, 42.f) : FVector(0.f, 0.f, 35.f));
-        LidMesh->SetRelativeRotation(bUnlocked ? FRotator(0.f, 0.f, -40.f) : FRotator::ZeroRotator);
+        LidMesh->SetRelativeLocation(bAllStagesDone ? FVector(0.f, 14.f, 42.f) : FVector(0.f, 0.f, 35.f));
+        LidMesh->SetRelativeRotation(bAllStagesDone ? FRotator(0.f, 0.f, -40.f) : FRotator::ZeroRotator);
         LidMesh->SetVisibility(bShowChest);
     }
     if (GemMesh)
     {
         GemMesh->SetVisibility(bShowChest && !bClaimed);
     }
-    // 顺序提示只在符文宝箱还没打开时显示
-    for (const TObjectPtr<UStaticMeshComponent>& Gem : OrderGems)
+
+    // 逐段刷：顺序宝石只显示当前段；符文已做的整片亮、当前段按进度亮、后续段全暗
+    for (int32 Index = 0; Index < Def.Stages.Num() && StageVisuals.IsValidIndex(Index); ++Index)
     {
-        if (Gem)
+        FXiaomaChestStageVisuals& V = Visuals(Index);
+        const bool bIsActive = Index == StageIndex;
+        for (const TObjectPtr<UStaticMeshComponent>& Gem : V.OrderGems)
         {
-            Gem->SetVisibility(bShowChest && !bUnlocked);
+            if (Gem)
+            {
+                Gem->SetVisibility(bShowChest && bIsActive);
+            }
         }
-    }
-    RefreshRuneVisuals();
-    // 埋藏点提示：读过石碑、还没挖出来时亮着
-    if (DigMarker)
-    {
-        DigMarker->SetVisibility(bBuried && bSteleRead);
+        RefreshRuneVisuals(Index);
+        if (V.DigMarker)
+        {
+            // 埋藏点提示：石碑读过、还没挖出来，且正好轮到这个石碑段
+            const bool bRead = StageProgress.IsValidIndex(Index) && StageProgress[Index] == 1;
+            V.DigMarker->SetVisibility(bIsActive && bRead && !bClaimed);
+        }
+        if (V.SteleGlyph)
+        {
+            const bool bLit = Index <= StageIndex;
+            V.SteleGlyph->SetRelativeScale3D(bLit ? FVector(0.09f, 0.09f, 0.13f) : FVector(0.06f));
+        }
     }
     // 石碑本体一直留在场上，所以不能整只 Actor 隐藏，只能逐个部件控制
     SetActorHiddenInGame(false);
@@ -567,25 +733,57 @@ void AXiaomaChest::RefreshVisuals()
 
 void AXiaomaChest::SaveState(TArray<uint8>& Out) const
 {
+    // 格式：[版本 2][已完成段数][是否领取][每段进度...]
+    // 首字节写 2 而不是 0/1，是为了和旧格式（首字节是 bUnlocked 的布尔值）区分开。
     Out.Reset();
-    Out.Add(bUnlocked ? 1 : 0);
+    Out.Add(2);
+    Out.Add(static_cast<uint8>(FMath::Clamp(StageIndex, 0, 255)));
     Out.Add(bClaimed ? 1 : 0);
-    Out.Add(static_cast<uint8>(FMath::Clamp(RuneProgress, 0, 255)));
-    Out.Add(bSteleRead ? 1 : 0);
-    Out.Add(bDug ? 1 : 0);
+    for (int32 Index = 0; Index < Def.Stages.Num(); ++Index)
+    {
+        Out.Add(StageProgress.IsValidIndex(Index) ? StageProgress[Index] : 0);
+    }
 }
 
 void AXiaomaChest::LoadState(const TArray<uint8>& In)
 {
-    if (In.Num() >= 2)
+    StageProgress.Init(0, Def.Stages.Num());
+    if (In.Num() >= 3 && In[0] == 2)
     {
-        bUnlocked = In[0] != 0;
-        bClaimed = In[1] != 0;
-        RuneProgress = In.Num() >= 3 ? In[2] : 0;
-        bSteleRead = In.Num() >= 4 && In[3] != 0;
-        bDug = In.Num() >= 5 && In[4] != 0;
-        RefreshVisuals();
+        StageIndex = FMath::Clamp<int32>(In[1], 0, Def.Stages.Num());
+        bClaimed = In[2] != 0;
+        for (int32 Index = 0; Index < Def.Stages.Num() && In.Num() > 3 + Index; ++Index)
+        {
+            StageProgress[Index] = In[3 + Index];
+        }
     }
+    else if (In.Num() >= 2)
+    {
+        // 旧格式（单段谜题）：指纹已经变了，正常不会走到这里，兜底按一段解释
+        const bool bOldUnlocked = In[0] != 0;
+        bClaimed = In[1] != 0;
+        StageIndex = bOldUnlocked ? Def.Stages.Num() : 0;
+        if (bOldUnlocked)
+        {
+            for (int32 Index = 0; Index < Def.Stages.Num(); ++Index)
+            {
+                StageProgress[Index] = static_cast<uint8>(MaxProgressForStage(Def.Stages[Index]));
+            }
+        }
+        else if (Def.Stages.Num() > 0)
+        {
+            const FXiaomaChestStage& First = Def.Stages[0];
+            if (First.PuzzleType == EXiaomaChestPuzzleType::Runes && In.Num() >= 3)
+            {
+                StageProgress[0] = In[2];
+            }
+            else if (First.PuzzleType == EXiaomaChestPuzzleType::Stele)
+            {
+                StageProgress[0] = (In.Num() >= 5 && In[4] != 0) ? 2 : ((In.Num() >= 4 && In[3] != 0) ? 1 : 0);
+            }
+        }
+    }
+    RefreshVisuals();
 }
 
 AXiaomaObstacle::AXiaomaObstacle()

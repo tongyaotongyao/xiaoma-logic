@@ -31,6 +31,127 @@ EXiaomaItemType ParseItemType(const FString& Name)
     if (Name.Equals(TEXT("clover"), ESearchCase::IgnoreCase)) return EXiaomaItemType::Clover;
     return EXiaomaItemType::Hint;
 }
+
+/**
+ * 解析一段开箱谜题，`then` 递归解析成后续段（组合宝箱）。
+ * 上限 3 段：再多玩家记不住顺序，也说明这一关该拆了，超出的部分只打日志丢掉。
+ * 返回 1 表示确实写入了一段，方便调用方判断"这条宝箱到底有没有谜题"。
+ */
+int32 ParseChestStage(const TSharedPtr<FJsonObject>& Puzzle, TArray<FXiaomaChestStage>& OutStages, int32 LevelId)
+{
+    constexpr int32 MaxStages = 3;
+    if (!Puzzle.IsValid() || OutStages.Num() >= MaxStages)
+    {
+        return 0;
+    }
+
+    FXiaomaChestStage Stage;
+
+    FString PuzzleTypeStr;
+    Puzzle->TryGetStringField(TEXT("type"), PuzzleTypeStr);
+    if (PuzzleTypeStr.Equals(TEXT("runes"), ESearchCase::IgnoreCase))
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Runes;
+    }
+    else if (PuzzleTypeStr.Equals(TEXT("stele"), ESearchCase::IgnoreCase))
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Stele;
+    }
+    else if (PuzzleTypeStr.Equals(TEXT("push"), ESearchCase::IgnoreCase))
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Push;
+    }
+    else
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Rule;
+    }
+
+    FString RuleTarget;
+    if (Puzzle->TryGetStringField(TEXT("target"), RuleTarget))
+    {
+        if (RuleTarget.Equals(TEXT("col"), ESearchCase::IgnoreCase)
+            || RuleTarget.Equals(TEXT("column"), ESearchCase::IgnoreCase))
+        {
+            Stage.RuleType = EXiaomaChestRuleType::Column;
+        }
+        else if (RuleTarget.Equals(TEXT("region"), ESearchCase::IgnoreCase))
+        {
+            Stage.RuleType = EXiaomaChestRuleType::Region;
+        }
+        else
+        {
+            Stage.RuleType = EXiaomaChestRuleType::Row;
+        }
+    }
+    int32 IndexVal = 0;
+    if (Puzzle->TryGetNumberField(TEXT("index"), IndexVal))
+    {
+        Stage.RuleIndex = FMath::Clamp(IndexVal, 0, FXiaomaPuzzle::Size - 1);
+    }
+
+    // 符文顺序
+    const TArray<TSharedPtr<FJsonValue>>* OrderArr = nullptr;
+    if (Puzzle->TryGetArrayField(TEXT("order"), OrderArr) && OrderArr)
+    {
+        for (const TSharedPtr<FJsonValue>& StepVal : *OrderArr)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* StepArr = nullptr;
+            FIntPoint Step;
+            if (StepVal->TryGetArray(StepArr) && StepArr && ParseIntPoint(*StepArr, Step))
+            {
+                Stage.RuneOrder.Add(Step);
+            }
+        }
+    }
+
+    // 石碑线索与埋藏格
+    const TSharedPtr<FJsonObject>* ClueObj = nullptr;
+    if (Puzzle->TryGetObjectField(TEXT("clue"), ClueObj) && ClueObj && (*ClueObj).IsValid())
+    {
+        (*ClueObj)->TryGetStringField(TEXT("text"), Stage.ClueText);
+        const TArray<TSharedPtr<FJsonValue>>* ClueCellArr = nullptr;
+        FIntPoint ClueCell;
+        if ((*ClueObj)->TryGetArrayField(TEXT("cell"), ClueCellArr) && ClueCellArr
+            && ParseIntPoint(*ClueCellArr, ClueCell))
+        {
+            Stage.SteleCell = ClueCell;
+        }
+    }
+    const TArray<TSharedPtr<FJsonValue>>* AnswerArr = nullptr;
+    FIntPoint AnswerCell;
+    if (Puzzle->TryGetArrayField(TEXT("answer"), AnswerArr) && AnswerArr
+        && ParseIntPoint(*AnswerArr, AnswerCell))
+    {
+        Stage.SteleAnswer = AnswerCell;
+    }
+
+    // 推箱压力板
+    const TArray<TSharedPtr<FJsonValue>>* PlateArr = nullptr;
+    FIntPoint PlateCell;
+    if (Puzzle->TryGetArrayField(TEXT("plate"), PlateArr) && PlateArr
+        && ParseIntPoint(*PlateArr, PlateCell))
+    {
+        Stage.PushPlate = PlateCell;
+    }
+
+    OutStages.Add(Stage);
+
+    // 组合宝箱：这一段做完才轮到 then 里的下一段
+    const TSharedPtr<FJsonObject>* ThenObj = nullptr;
+    if (Puzzle->TryGetObjectField(TEXT("then"), ThenObj) && ThenObj && (*ThenObj).IsValid())
+    {
+        if (OutStages.Num() >= MaxStages)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("Level %d: chest puzzle chains more than %d stages, extra stages ignored"), LevelId, MaxStages);
+        }
+        else
+        {
+            ParseChestStage(*ThenObj, OutStages, LevelId);
+        }
+    }
+    return 1;
+}
 }
 
 bool FXiaomaLevel::IsGiven(int32 Row, int32 Column) const
@@ -206,94 +327,14 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                         const TSharedPtr<FJsonObject>* PuzzleObj = nullptr;
                         if (ChestObj->TryGetObjectField(TEXT("puzzle"), PuzzleObj) && PuzzleObj && (*PuzzleObj).IsValid())
                         {
-                            const TSharedPtr<FJsonObject>& Puzzle = *PuzzleObj;
-
-                            FString PuzzleTypeStr;
-                            Puzzle->TryGetStringField(TEXT("type"), PuzzleTypeStr);
-                            if (PuzzleTypeStr.Equals(TEXT("runes"), ESearchCase::IgnoreCase))
-                            {
-                                Def.PuzzleType = EXiaomaChestPuzzleType::Runes;
-                            }
-                            else if (PuzzleTypeStr.Equals(TEXT("stele"), ESearchCase::IgnoreCase))
-                            {
-                                Def.PuzzleType = EXiaomaChestPuzzleType::Stele;
-                            }
-                            else if (PuzzleTypeStr.Equals(TEXT("push"), ESearchCase::IgnoreCase))
-                            {
-                                Def.PuzzleType = EXiaomaChestPuzzleType::Push;
-                            }
-                            else
-                            {
-                                Def.PuzzleType = EXiaomaChestPuzzleType::Rule;
-                            }
-
-                            FString RuleTarget;
-                            if (Puzzle->TryGetStringField(TEXT("target"), RuleTarget))
-                            {
-                                if (RuleTarget.Equals(TEXT("col"), ESearchCase::IgnoreCase)
-                                    || RuleTarget.Equals(TEXT("column"), ESearchCase::IgnoreCase))
-                                {
-                                    Def.RuleType = EXiaomaChestRuleType::Column;
-                                }
-                                else if (RuleTarget.Equals(TEXT("region"), ESearchCase::IgnoreCase))
-                                {
-                                    Def.RuleType = EXiaomaChestRuleType::Region;
-                                }
-                                else
-                                {
-                                    Def.RuleType = EXiaomaChestRuleType::Row;
-                                }
-                            }
-                            int32 IndexVal = 0;
-                            if (Puzzle->TryGetNumberField(TEXT("index"), IndexVal))
-                            {
-                                Def.RuleIndex = FMath::Clamp(IndexVal, 0, Size - 1);
-                            }
-
-                            // 符文顺序
-                            const TArray<TSharedPtr<FJsonValue>>* OrderArr = nullptr;
-                            if (Puzzle->TryGetArrayField(TEXT("order"), OrderArr) && OrderArr)
-                            {
-                                for (const TSharedPtr<FJsonValue>& StepVal : *OrderArr)
-                                {
-                                    const TArray<TSharedPtr<FJsonValue>>* StepArr = nullptr;
-                                    FIntPoint Step;
-                                    if (StepVal->TryGetArray(StepArr) && StepArr && ParseIntPoint(*StepArr, Step))
-                                    {
-                                        Def.RuneOrder.Add(Step);
-                                    }
-                                }
-                            }
-
-                            // 石碑线索与埋藏格
-                            const TSharedPtr<FJsonObject>* ClueObj = nullptr;
-                            if (Puzzle->TryGetObjectField(TEXT("clue"), ClueObj) && ClueObj && (*ClueObj).IsValid())
-                            {
-                                (*ClueObj)->TryGetStringField(TEXT("text"), Def.ClueText);
-                                const TArray<TSharedPtr<FJsonValue>>* ClueCellArr = nullptr;
-                                FIntPoint ClueCell;
-                                if ((*ClueObj)->TryGetArrayField(TEXT("cell"), ClueCellArr) && ClueCellArr
-                                    && ParseIntPoint(*ClueCellArr, ClueCell))
-                                {
-                                    Def.SteleCell = ClueCell;
-                                }
-                            }
-                            const TArray<TSharedPtr<FJsonValue>>* AnswerArr = nullptr;
-                            FIntPoint AnswerCell;
-                            if (Puzzle->TryGetArrayField(TEXT("answer"), AnswerArr) && AnswerArr
-                                && ParseIntPoint(*AnswerArr, AnswerCell))
-                            {
-                                Def.SteleAnswer = AnswerCell;
-                            }
-
-                            // 推箱压力板
-                            const TArray<TSharedPtr<FJsonValue>>* PlateArr = nullptr;
-                            FIntPoint PlateCell;
-                            if (Puzzle->TryGetArrayField(TEXT("plate"), PlateArr) && PlateArr
-                                && ParseIntPoint(*PlateArr, PlateCell))
-                            {
-                                Def.PushPlate = PlateCell;
-                            }
+                            // 顶层是第一段，then 里的依次是后续段
+                            ParseChestStage(*PuzzleObj, Def.Stages, Level.Id);
+                        }
+                        if (Def.Stages.Num() == 0)
+                        {
+                            // 没写谜题的宝箱按规则开箱兜底（行为与旧版一致），
+                            // 校验工具会把缺 puzzle 的宝箱报成错误。
+                            Def.Stages.Add(FXiaomaChestStage());
                         }
                         Level.Adventure.Chests.Add(Def);
                     }
@@ -618,20 +659,26 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
         Mix(Chest.Cell.X);
         Mix(Chest.Cell.Y);
         Mix(static_cast<int32>(Chest.Reward));
-        Mix(static_cast<int32>(Chest.PuzzleType));
-        Mix(Chest.RuleIndex);
-        Mix(Chest.RuneOrder.Num());
-        for (const FIntPoint& Rune : Chest.RuneOrder)
+        // 段数与每段全部字段都算：改链式顺序等于改了开箱方式，旧续局必须失效
+        Mix(Chest.Stages.Num());
+        for (const FXiaomaChestStage& Stage : Chest.Stages)
         {
-            Mix(Rune.X);
-            Mix(Rune.Y);
+            Mix(static_cast<int32>(Stage.PuzzleType));
+            Mix(static_cast<int32>(Stage.RuleType));
+            Mix(Stage.RuleIndex);
+            Mix(Stage.RuneOrder.Num());
+            for (const FIntPoint& Rune : Stage.RuneOrder)
+            {
+                Mix(Rune.X);
+                Mix(Rune.Y);
+            }
+            Mix(Stage.SteleCell.X);
+            Mix(Stage.SteleCell.Y);
+            Mix(Stage.SteleAnswer.X);
+            Mix(Stage.SteleAnswer.Y);
+            Mix(Stage.PushPlate.X);
+            Mix(Stage.PushPlate.Y);
         }
-        Mix(Chest.SteleCell.X);
-        Mix(Chest.SteleCell.Y);
-        Mix(Chest.SteleAnswer.X);
-        Mix(Chest.SteleAnswer.Y);
-        Mix(Chest.PushPlate.X);
-        Mix(Chest.PushPlate.Y);
     }
 
     Mix(Level.Adventure.Items.Num());

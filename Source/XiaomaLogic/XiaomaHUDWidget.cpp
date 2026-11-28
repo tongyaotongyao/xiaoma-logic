@@ -237,10 +237,16 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
     // 原先恒写 "/5" 会让满血看起来像掉过血。
     AddText(Panel, FString::Printf(TEXT("生命 %d  ·  步数 %d/%d"),
         Game->GetLives(), Game->GetStepCount(), Game->GetParSteps()), 16, Gold);
-    AddText(Panel, FString::Printf(TEXT("提示星 %d  ·  四叶草 %s"),
-        Game->GetHintTokens(), Game->HasClover() ? TEXT("有") : TEXT("无")), 16, Gold);
-    AddText(Panel, FString::Printf(TEXT("好感 %d  ·  连胜 %d"),
-        Game->GetAffection(), Game->GetWinStreak()), 15, Muted);
+    // 宝箱数写在这里：三星的第三颗星就是「集齐本关宝箱」，目标得让玩家看得见。
+    // 第 1、2 关没有宝箱，写 "0/0" 会让人以为漏了一个，干脆显示成横杠。
+    const int32 ChestTotal = Game->GetChestCount();
+    const FString ChestText = ChestTotal > 0
+        ? FString::Printf(TEXT("%d/%d"), Game->GetOpenedChestCount(), ChestTotal)
+        : FString(TEXT("—"));
+    AddText(Panel, FString::Printf(TEXT("提示星 %d  ·  宝箱 %s"),
+        Game->GetHintTokens(), *ChestText), 16, Gold);
+    AddText(Panel, FString::Printf(TEXT("四叶草 %s  ·  好感 %d  ·  连胜 %d"),
+        Game->HasClover() ? TEXT("有") : TEXT("无"), Game->GetAffection(), Game->GetWinStreak()), 15, Muted);
     const FString KInteract = Game->GetKeyForAction(EXiaomaBindAction::Interact).GetDisplayName().ToString();
     const FString KMark = Game->GetKeyForAction(EXiaomaBindAction::Mark).GetDisplayName().ToString();
     const FString KOverview = Game->GetKeyForAction(EXiaomaBindAction::Overview).GetDisplayName().ToString();

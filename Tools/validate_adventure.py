@@ -37,9 +37,47 @@ LEVELS_PATH = ROOT / "Content" / "Levels" / "levels.json"
 ITEM_TYPES = ("hint", "apple", "carrot", "clover")
 ITEM_SYMBOL = {"hint": "h", "apple": "a", "carrot": "c", "clover": "f"}
 PUZZLE_TYPES = ("rule", "runes", "stele", "push")
+# 组合宝箱（puzzle.then 链）最多 3 段：再多玩家记不住顺序，也说明这一关该拆了
+MAX_PUZZLE_STAGES = 3
 UNIMPLEMENTED_KEYS = ("steles",)
 DIRECTIONS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 INF = float("inf")
+
+
+def puzzle_stages(puzzle):
+    """按顺序产出 `puzzle` 与它 then 链上的每一段（组合宝箱）。"""
+    stage = puzzle
+    count = 0
+    while isinstance(stage, dict) and count < MAX_PUZZLE_STAGES:
+        yield stage
+        stage = stage.get("then")
+        count += 1
+
+
+def chest_route_cells(chests):
+    """宝箱谜题里玩家必须踩到的格子（含每一段）。
+
+    三星要看「集齐本关宝箱」，所以标准步数也得把这条路线算进去；
+    推箱段按「玩家自己站到压力板上」近似，手数没法在「进入格子」的度量里精确表达。
+    """
+    cells = []
+    for chest in chests or []:
+        if not isinstance(chest, dict):
+            continue
+        chest_cell = as_cell(chest.get("cell"))
+        if isinstance(chest_cell, tuple):
+            cells.append(chest_cell)
+        for stage in puzzle_stages(chest.get("puzzle") or {}):
+            kind = stage.get("type")
+            if kind == "runes":
+                cells += [as_cell(cell) for cell in stage.get("order") or []]
+            elif kind == "stele":
+                clue = stage.get("clue") or {}
+                if isinstance(clue, dict) and "cell" in clue:
+                    cells.append(as_cell(clue["cell"]))
+            elif kind == "push":
+                cells.append(as_cell(stage.get("plate")))
+    return [cell for cell in cells if isinstance(cell, tuple)]
 
 
 def load_levels(path=LEVELS_PATH):
@@ -245,6 +283,7 @@ def check_adventure(level, errors, warnings):
             continue
         check_puzzle_def(puzzle, where + ".puzzle", errors, solution_cells)
         out["chests"].append({"cell": cell, "puzzle": puzzle.get("type"),
+                              "chain": [stage.get("type") for stage in puzzle_stages(puzzle)],
                               "reward": reward, "puzzle_def": puzzle})
 
     obstacles = parse_cell_list(adv.get("obstacles"), "adventure.obstacles", errors)
@@ -515,21 +554,24 @@ def check_adventure(level, errors, warnings):
         if not isinstance(chest, dict):
             continue
         puzzle = chest.get("puzzle") or {}
-        where = "adventure.chests[%d].puzzle" % index
-        kind = puzzle.get("type")
-        if kind == "runes":
-            for position, cell_value in enumerate(puzzle.get("order") or []):
-                puzzle_cells.append(("符文", as_cell(cell_value),
-                                     "%s.order[%d]" % (where, position)))
-        elif kind == "stele":
-            clue = puzzle.get("clue") or {}
-            if isinstance(clue, dict) and "cell" in clue:
-                puzzle_cells.append(("石碑", as_cell(clue["cell"]), where + ".clue.cell"))
-            answer = as_cell(puzzle.get("answer"))
-            chest_cell = as_cell(chest.get("cell"))
-            if answer is not None and chest_cell is not None and answer != chest_cell:
-                errors.append("%s.answer 是 %r，但宝箱 cell 是 %r；埋藏格应与宝箱同格"
-                              % (where, answer, chest_cell))
+        # 组合宝箱：then 链上的每一段都要收进格子检查，否则后续段的符文/石碑
+        # 会和障碍、宝箱、道具撞在一起而没人发现
+        for depth, stage in enumerate(puzzle_stages(puzzle)):
+            where = "adventure.chests[%d].puzzle%s" % (index, ".then" * depth)
+            kind = stage.get("type")
+            if kind == "runes":
+                for position, cell_value in enumerate(stage.get("order") or []):
+                    puzzle_cells.append(("符文", as_cell(cell_value),
+                                         "%s.order[%d]" % (where, position)))
+            elif kind == "stele":
+                clue = stage.get("clue") or {}
+                if isinstance(clue, dict) and "cell" in clue:
+                    puzzle_cells.append(("石碑", as_cell(clue["cell"]), where + ".clue.cell"))
+                answer = as_cell(stage.get("answer"))
+                chest_cell = as_cell(chest.get("cell"))
+                if answer is not None and chest_cell is not None and answer != chest_cell:
+                    errors.append("%s.answer 是 %r，但宝箱 cell 是 %r；埋藏格应与宝箱同格"
+                                  % (where, answer, chest_cell))
     seen_puzzle = set()
     for kind, cell, where in puzzle_cells:
         if not isinstance(cell, tuple):
@@ -554,10 +596,41 @@ def check_adventure(level, errors, warnings):
     out["puzzle_cells"] = puzzle_cells
     out["chests_raw"] = chests
 
+    # 宝箱可完成性：三星的第三颗星是「集齐本关宝箱」，一个走不到或开不了的宝箱
+    # 等于这一关永远拿不到三星。这里按「围栏都能打开」算一次全图可达，
+    # 把宝箱格与每一段的触发格都走一遍。
+    if chests:
+        walk_all = walkable_cells(out["obstacles"])
+        reach_all = reachable(out["start"], walk_all, ice_set, bridge_set, gates)
+        for index, chest in enumerate(chests):
+            if not isinstance(chest, dict):
+                continue
+            chest_where = "adventure.chests[%d]" % index
+            checks = [(chest_where + ".cell", as_cell(chest.get("cell")), "宝箱格")]
+            for depth, stage in enumerate(puzzle_stages(chest.get("puzzle") or {})):
+                stage_where = "adventure.chests[%d].puzzle%s" % (index, ".then" * depth)
+                kind = stage.get("type")
+                if kind == "runes":
+                    for position, cell_value in enumerate(stage.get("order") or []):
+                        checks.append(("%s.order[%d]" % (stage_where, position),
+                                       as_cell(cell_value), "符文格"))
+                elif kind == "stele":
+                    clue = stage.get("clue") or {}
+                    if isinstance(clue, dict) and "cell" in clue:
+                        checks.append((stage_where + ".clue.cell", as_cell(clue["cell"]), "石碑格"))
+                elif kind == "push":
+                    checks.append((stage_where + ".plate", as_cell(stage.get("plate")), "压力板"))
+            for cell_where, cell, label in checks:
+                if not isinstance(cell, tuple):
+                    continue
+                if cell not in reach_all:
+                    errors.append("%s %s %r 从起点走不到（按围栏全部打开计算），这个宝箱开不了"
+                                  % (cell_where, label, cell))
+
     return out
 
 
-def check_puzzle_def(puzzle, where, errors, solution_cells):
+def check_puzzle_def(puzzle, where, errors, solution_cells, depth=0):
     kind = puzzle.get("type")
     if kind not in PUZZLE_TYPES:
         errors.append("%s.type 应为 %s 之一，实际为 %r"
@@ -601,10 +674,13 @@ def check_puzzle_def(puzzle, where, errors, solution_cells):
             errors.append("%s 不再使用 box 字段，木箱统一写在 adventure.boxes 里" % where)
     then = puzzle.get("then")
     if then is not None:
-        if not isinstance(then, dict):
+        if depth + 1 >= MAX_PUZZLE_STAGES:
+            errors.append("%s.then 已经到第 %d 段，组合宝箱最多 %d 段：再多玩家记不住顺序"
+                          % (where, depth + 2, MAX_PUZZLE_STAGES))
+        elif not isinstance(then, dict):
             errors.append("%s.then 应为嵌套谜题对象" % where)
         else:
-            check_puzzle_def(then, where + ".then", errors, solution_cells)
+            check_puzzle_def(then, where + ".then", errors, solution_cells, depth + 1)
 
 
 # --------------------------------------------------------------------------
@@ -979,7 +1055,8 @@ def describe(level, adv, minimum, computed_par):
     if adv:
         items = "、".join("%s(%d,%d)" % (kind, cell[0], cell[1]) for kind, cell in adv["items"])
         lines.append("    道具：%s" % (items or "无"))
-        chests = "、".join("%s@(%d,%d)" % (chest["puzzle"], chest["cell"][0], chest["cell"][1])
+        chests = "、".join("%s@(%d,%d)" % ("->".join(str(part) for part in chest.get("chain") or [chest["puzzle"]]),
+                                          chest["cell"][0], chest["cell"][1])
                           for chest in adv["chests"])
         lines.append("    宝箱：%s" % (chests or "无"))
         patrols = "、".join("%s 速%.1f" % ("->".join("(%d,%d)" % c for c in patrol["path"]),
@@ -1064,17 +1141,23 @@ def validate(data, verbose=True):
                 if isinstance(cell, tuple) and cell not in reached:
                     level_errors.append("%s 的 %s 在 (%d,%d)，起点走不过去"
                                         % (where, kind, cell[0], cell[1]))
-            # 符文顺序必须真的能按顺序走完（踩错就全灭）
+            # 符文顺序必须真的能按顺序走完（踩错就全灭），链式宝箱每一段都要查
             for index, chest in enumerate(adv.get("chests_raw") or []):
-                puzzle = (chest.get("puzzle") or {}) if isinstance(chest, dict) else {}
-                if puzzle.get("type") != "runes":
+                if not isinstance(chest, dict):
                     continue
-                order = [as_cell(cell) for cell in puzzle.get("order") or []]
-                if order and not runes_solvable(adv["start"], order, walkable):
-                    level_errors.append("adventure.chests[%d] 的符文顺序走不通："
-                                        "必须先踩后面才该踩的符文才能到达" % index)
+                for depth, stage in enumerate(puzzle_stages(chest.get("puzzle") or {})):
+                    if stage.get("type") != "runes":
+                        continue
+                    order = [as_cell(cell) for cell in stage.get("order") or []]
+                    if order and not runes_solvable(adv["start"], order, walkable):
+                        level_errors.append("adventure.chests[%d].puzzle%sthen 的符文顺序走不通："
+                                            "必须先踩后面才该踩的符文才能到达" % (index, ".then" * depth))
+
+            # 三星的第三颗星是「集齐本关宝箱」，所以标准路线也必须把宝箱谜题里
+            # 必须踩到的格子算进去，否则「步数达标」和「集齐」两项互相打架，三星永远拿不到。
+            puzzle_targets = list(targets) + chest_route_cells(adv.get("chests_raw"))
             if not missing:
-                minimum = min_steps(adv["start"], targets, walkable, ice, bridges, gates)
+                minimum = min_steps(adv["start"], puzzle_targets, walkable, ice, bridges, gates)
                 if minimum is not None:
                     computed_par = par_from(minimum)
                     if isinstance(adv["par"], int) and adv["par"] != computed_par:
