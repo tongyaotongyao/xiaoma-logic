@@ -162,6 +162,10 @@ private:
     void OnBridgeCollapsing(class AXiaomaBridge* Bridge);
     /** 直接把主角搬走（撤销/读档/挨撞）之后，把"人还在不在桥上"同步给各座桥 */
     void SyncBridgeOccupancy();
+    /** 踩到围栏开关：此刻门还关着，先压一条"没开门"的快照，再让门打开 */
+    void OnGateOpened(class AXiaomaGate* Gate);
+    /** 兜底：人已经在栏内、门却关着（存档不一致）时直接开门，别把人卡死在原地 */
+    void EnsureGateConsistency();
     void OnWheelSelectColour(int32 ColourIndex);
     void OnWheelRecall();
     void OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FString& OutMessage);

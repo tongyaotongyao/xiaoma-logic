@@ -424,6 +424,30 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                     }
                 }
             }
+            // 色区围栏：每道围栏一个机关 actor，开/关状态进存档与撤销快照
+            const TArray<TSharedPtr<FJsonValue>>* GateArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("gates"), GateArr) && GateArr)
+            {
+                for (const TSharedPtr<FJsonValue>& GateVal : *GateArr)
+                {
+                    const TSharedPtr<FJsonObject> GateObj = GateVal->AsObject();
+                    if (!GateObj.IsValid()) continue;
+                    const TArray<TSharedPtr<FJsonValue>>* SwitchArr = nullptr;
+                    FXiaomaGateDef Def;
+                    int32 RegionValue = -1;
+                    // 区域越界或开关格不合法都只丢这一条，不连累整关
+                    if (!GateObj->TryGetNumberField(TEXT("region"), RegionValue)
+                        || RegionValue < 0 || RegionValue >= 6
+                        || !GateObj->TryGetArrayField(TEXT("switch"), SwitchArr) || !SwitchArr
+                        || !ParseIntPoint(*SwitchArr, Def.SwitchCell))
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: gate needs region 0-5 and a switch cell, ignored"), Level.Id);
+                        continue;
+                    }
+                    Def.Region = RegionValue;
+                    Level.Adventure.Gates.Add(Def);
+                }
+            }
         }
         OutLevels.Add(MoveTemp(Level));
     }
@@ -653,6 +677,15 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
     {
         Mix(BridgeCell.X);
         Mix(BridgeCell.Y);
+    }
+
+    // 围栏同样按 Mechanisms 下标写进存档；区域或开关格一改，旧续局的开门状态就错位了
+    Mix(Level.Adventure.Gates.Num());
+    for (const FXiaomaGateDef& Gate : Level.Adventure.Gates)
+    {
+        Mix(Gate.Region);
+        Mix(Gate.SwitchCell.X);
+        Mix(Gate.SwitchCell.Y);
     }
 
     return static_cast<int32>(Hash & 0x7fffffffu);

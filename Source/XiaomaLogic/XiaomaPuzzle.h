@@ -67,6 +67,21 @@ struct FXiaomaBoxDef
     FIntPoint Cell = FIntPoint(0, 0);
 };
 
+/**
+ * 色区围栏：把某个色区四周封住，主角进不去区域内的格子。
+ * 踩下区域外的开关后永久打开，不能手动关上（撤销可以把「没开门」的状态退回来）。
+ *
+ * 它是唯一允许盖住正解格的阻碍——关卡设计的意图就是「什么时候进这个色区」，
+ * 开关摆得远一点，绕路的代价就写进 par 里。
+ */
+struct FXiaomaGateDef
+{
+    /** 被围住的色区编号（0~5） */
+    int32 Region = 0;
+    /** 开关格：必须在区域外，初始关闭时主角才踩得到 */
+    FIntPoint SwitchCell = FIntPoint(-1, -1);
+};
+
 /** 巡逻捣蛋鬼：沿 Path 的格子中心匀速往返，Speed 单位为格/秒 */
 struct FXiaomaPatrolDef
 {
@@ -100,6 +115,11 @@ struct FXiaomaAdventureData
      * 所以解析出来的只是初始格，运行时会额外生成 actor。
      */
     TArray<FIntPoint> Bridges;
+    /**
+     * 色区围栏：把整个色区四周封住，踩下区域外的开关后永久打开。
+     * 每道围栏是一个机关（`AXiaomaGate`），开/关状态要进撤销快照与存档。
+     */
+    TArray<FXiaomaGateDef> Gates;
 };
 
 struct FXiaomaLevel

@@ -138,6 +138,38 @@ bool FXiaomaPuzzleTest::RunTest(const FString& Parameters)
     Bridged.Adventure.Bridges.Add(FIntPoint(5, 5));
     TestNotEqual(TEXT("Fingerprint tracks bridges"), FXiaomaPuzzle::AdventureFingerprint(Bridged), Fingerprint6);
 
+    // 色区围栏：第 21 关起才配；开门状态按 Mechanisms 下标进存档，区域与开关格也必须进指纹
+    for (int32 Index = 0; Index < 20; ++Index)
+    {
+        TestTrue(FString::Printf(TEXT("Level %d has no gates"), Levels[Index].Id),
+            Levels[Index].Adventure.Gates.IsEmpty());
+    }
+    TestEqual(TEXT("Level 21 gate count"), Levels[20].Adventure.Gates.Num(), 1);
+    if (Levels[20].Adventure.Gates.Num() == 1)
+    {
+        const FXiaomaGateDef& Gate = Levels[20].Adventure.Gates[0];
+        TestEqual(TEXT("Level 21 gate region"), Gate.Region, 2);
+        TestEqual(TEXT("Level 21 gate switch row"), Gate.SwitchCell.X, 3);
+        TestEqual(TEXT("Level 21 gate switch column"), Gate.SwitchCell.Y, 3);
+        TestTrue(TEXT("Level 21 gate switch is outside its region"),
+            Levels[20].RegionAt(Gate.SwitchCell.X, Gate.SwitchCell.Y) != Gate.Region);
+    }
+    FXiaomaLevel Gated = Levels[5];
+    FXiaomaGateDef ExtraGate;
+    ExtraGate.Region = 1;
+    ExtraGate.SwitchCell = FIntPoint(3, 3);
+    Gated.Adventure.Gates.Add(ExtraGate);
+    TestNotEqual(TEXT("Fingerprint tracks gates"), FXiaomaPuzzle::AdventureFingerprint(Gated), Fingerprint6);
+    // 区域或开关格一改，存档里那个开门状态就配错格子了，所以两者都要进指纹
+    FXiaomaLevel OtherRegion = Gated;
+    OtherRegion.Adventure.Gates[0].Region = 2;
+    TestNotEqual(TEXT("Fingerprint tracks gate region"),
+        FXiaomaPuzzle::AdventureFingerprint(OtherRegion), FXiaomaPuzzle::AdventureFingerprint(Gated));
+    FXiaomaLevel OtherSwitch = Gated;
+    OtherSwitch.Adventure.Gates[0].SwitchCell = FIntPoint(4, 4);
+    TestNotEqual(TEXT("Fingerprint tracks gate switch"),
+        FXiaomaPuzzle::AdventureFingerprint(OtherSwitch), FXiaomaPuzzle::AdventureFingerprint(Gated));
+
     // 续局判定：关卡、格数、生命、布局指纹任一条不对就不续
     UXiaomaSaveGame* Round = NewObject<UXiaomaSaveGame>();
     Round->MigrateLevelRevision();

@@ -37,7 +37,7 @@ LEVELS_PATH = ROOT / "Content" / "Levels" / "levels.json"
 ITEM_TYPES = ("hint", "apple", "carrot", "clover")
 ITEM_SYMBOL = {"hint": "h", "apple": "a", "carrot": "c", "clover": "f"}
 PUZZLE_TYPES = ("rule", "runes", "stele", "push")
-UNIMPLEMENTED_KEYS = ("gates", "steles")
+UNIMPLEMENTED_KEYS = ("steles",)
 DIRECTIONS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 INF = float("inf")
 
@@ -422,6 +422,84 @@ def check_adventure(level, errors, warnings):
     if boxes and not plates:
         warnings.append("配了木箱但没有推箱宝箱的压力板，木箱只能推着玩")
 
+    # 色区围栏：封住整个色区，踩下区域外的开关后永久打开（不可再关）。
+    # 它是唯一允许盖住正解格的阻碍，所以这里不报「区域内有正解格」。
+    gates_raw = adv.get("gates") or []
+    if not isinstance(gates_raw, list):
+        errors.append("adventure.gates 应为数组")
+        gates_raw = []
+    regions = level.get("regions") or []
+    gates = []
+    gate_region_cells = set()
+    seen_gate_regions = set()
+    seen_gate_switches = set()
+    for index, gate in enumerate(gates_raw):
+        where = "adventure.gates[%d]" % index
+        if not isinstance(gate, dict):
+            errors.append("%s 应为对象" % where)
+            continue
+        region = gate.get("region")
+        if isinstance(region, bool) or not isinstance(region, int) or not 0 <= region < SIZE:
+            errors.append("%s.region 应为 0~5 的色区编号，实际为 %r" % (where, region))
+            continue
+        if len(regions) != SIZE or any(len(row) != SIZE for row in regions):
+            errors.append("%s：关卡 regions 结构不合法，无法确定围栏范围" % where)
+            continue
+        region_cells = {(r, c) for r in range(SIZE) for c in range(SIZE)
+                        if regions[r][c] == region}
+        if not region_cells:
+            errors.append("%s.region = %d 在棋盘上没有对应的色区" % (where, region))
+            continue
+        if region in seen_gate_regions:
+            errors.append("%s 与另一道围栏围住同一个色区 %d" % (where, region))
+        seen_gate_regions.add(region)
+        switch = parse_cell(gate.get("switch"), where + ".switch", errors)
+        if switch is None:
+            continue
+        if switch in region_cells:
+            errors.append("%s.switch %r 在围栏区域内：门关着时主角进不去，永远踩不到开关" % (where, switch))
+        if switch in seen_gate_switches:
+            errors.append("%s.switch %r 与另一道围栏的开关同格" % (where, switch))
+        seen_gate_switches.add(switch)
+        if switch in obstacle_set:
+            errors.append("%s.switch %r 与障碍同格" % (where, switch))
+        if switch in bridge_set:
+            errors.append("%s.switch %r 在塌陷木桥上：桥一塌开关就踩不到了" % (where, switch))
+        if switch in ice_set:
+            errors.append("%s.switch %r 在冰面上：滑行经过不算踩，也停不住" % (where, switch))
+        if switch in out["chests_cells"]:
+            errors.append("%s.switch %r 与宝箱同格" % (where, switch))
+        if switch in boxes:
+            errors.append("%s.switch %r 与木箱同格" % (where, switch))
+        for item_kind, item_cell in out["items"]:
+            if switch == item_cell:
+                errors.append("%s.switch %r 与道具 %s 同格" % (where, switch, item_kind))
+        if switch == out["start"]:
+            warnings.append("%s.switch 就是主角起点：一进关围栏就开了，这道围栏等于没有" % where)
+        gate_region_cells |= region_cells
+        gates.append({"region": region, "switch": switch, "cells": sorted(region_cells)})
+    out["gates"] = gates
+    out["gate_region_cells"] = gate_region_cells
+
+    if gates:
+        # 围栏是「区域级开关」，和需要逐格状态的机制叠在一起规则就没法解释了，暂不同关
+        if ice_set:
+            errors.append("色区围栏与冰面不要放在同一关：滑行会不会冲过关闭的围栏，规则还没定义")
+        if boxes:
+            errors.append("色区围栏与木箱不要放在同一关：推箱状态里还要再叠一层开门状态，实现前容易算错")
+        if bridge_set:
+            errors.append("色区围栏与塌陷木桥不要放在同一关：桥塌与开门是两套不可逆状态，叠起来暂时不做")
+        # 捣蛋鬼的路线是静态数据，门是动态的；让它被门挡住会出现「开门前撞墙、开门后突然进来」
+        for index, patrol in enumerate(out["patrols"]):
+            inside = sorted(cell for cell in patrol["path"] if cell in gate_region_cells)
+            if inside:
+                errors.append("adventure.patrols[%d].path 进入围栏区域 %s：开门前捣蛋鬼会被门挡住，"
+                              "开门后突然能进来，玩家没法预判"
+                              % (index, "、".join("(%d,%d)" % cell for cell in inside)))
+        # 开关格必须站得住：关门时它是唯一能改变局势的格子
+        if out["start"] in gate_region_cells:
+            errors.append("主角起点在围栏区域内：一进关就被关在里面")
+
     used = set()
     for key in UNIMPLEMENTED_KEYS:
         value = adv.get(key)
@@ -577,24 +655,50 @@ def bridge_step_blocked(cell, bridge_index, used):
     return bit is not None and bool(used & bit)
 
 
-def reachable(start, walkable, ice=frozenset(), bridges=frozenset()):
+def gate_tables(gates):
+    """把围栏整理成 BFS 用的三张表：开关格->位、色区->位、格->色区。"""
+    switch_bits = {}
+    region_bits = {}
+    region_of = {}
+    for index, gate in enumerate(gates or []):
+        bit = 1 << index
+        switch = as_cell(gate["switch"])
+        switch_bits[switch] = bit
+        region_bits[gate["region"]] = bit
+        for cell in gate.get("cells") or []:
+            region_of[as_cell(cell)] = gate["region"]
+    return switch_bits, region_bits, region_of
+
+
+def gate_blocked(cell, region_of, region_bits, opened):
+    """这一格是否被一道还没打开的围栏挡住。opened 是已开围栏的位掩码。"""
+    bit = region_bits.get(region_of.get(cell))
+    return bit is not None and not (opened & bit)
+
+
+def reachable(start, walkable, ice=frozenset(), bridges=frozenset(), gates=()):
     """能站到的格子集合。
 
     有木桥时状态要带上"哪几座桥已经用掉"：桥塌了就永久不能再进，
     所以同一个格子可能在"桥还在"和"桥已塌"两种历史下有不同的可达性。
+    围栏同理，状态再叠一层"哪几道围栏已经打开"——门只能在开关格打开，且一开就不再关。
     """
     start = as_cell(start)
     if start is None or start not in walkable:
         return set()
     bridge_index = {as_cell(cell): 1 << index for index, cell in enumerate(sorted(bridges))}
-    seen = {(start, 0)}
+    switch_bits, region_bits, region_of = gate_tables(gates)
+    start_opened = switch_bits.get(start, 0)
+    seen = {(start, 0, start_opened)}
     reached = {start}
-    todo = deque([(start, 0)])
+    todo = deque([(start, 0, start_opened)])
     while todo:
-        cell, used = todo.popleft()
+        cell, used, opened = todo.popleft()
         for direction in DIRECTIONS:
             nxt = (cell[0] + direction[0], cell[1] + direction[1])
             if bridge_step_blocked(nxt, bridge_index, used):
+                continue
+            if gate_blocked(nxt, region_of, region_bits, opened):
                 continue
             step = slide_step(cell, direction, walkable, ice)
             if step is None:
@@ -602,7 +706,9 @@ def reachable(start, walkable, ice=frozenset(), bridges=frozenset()):
             other = step[0]
             # 离开桥格的那一刻桥就塌了，之后的搜索里它变成坑
             new_used = used | bridge_index.get(cell, 0)
-            key = (other, new_used)
+            # 踩到开关格就开门；滑行经过开关格同样算踩到
+            new_opened = opened | switch_bits.get(nxt, 0) | switch_bits.get(other, 0)
+            key = (other, new_used, new_opened)
             if key in seen:
                 continue
             seen.add(key)
@@ -611,11 +717,11 @@ def reachable(start, walkable, ice=frozenset(), bridges=frozenset()):
     return reached
 
 
-def min_steps(start, targets, walkable, ice=frozenset(), bridges=frozenset()):
+def min_steps(start, targets, walkable, ice=frozenset(), bridges=frozenset(), gates=()):
     """从起点走遍全部 targets 的最少“进入新格子”次数。
 
-    状态 = (当前格, 已踩过的目标集合, 已塌的桥集合)。没有冰和桥时每步都是 1 格，
-    退化成普通广度优先；有冰时一步可能滑出好几格，代价等于跨过的格数，所以用
+    状态 = (当前格, 已踩过的目标集合, 已塌的桥集合, 已开的围栏集合)。没有冰和桥时每步
+    都是 1 格，退化成普通广度优先；有冰时一步可能滑出好几格，代价等于跨过的格数，所以用
     Dijkstra 按代价展开。
     """
     start = as_cell(start)
@@ -628,17 +734,19 @@ def min_steps(start, targets, walkable, ice=frozenset(), bridges=frozenset()):
     if any(cell not in walkable for cell in targets):
         return None
     bridge_index = {as_cell(cell): 1 << index for index, cell in enumerate(sorted(bridges))}
+    switch_bits, region_bits, region_of = gate_tables(gates)
     full = (1 << len(targets)) - 1
     start_mask = 1 << index_of[start] if start in index_of else 0
     if start_mask == full:
         return 0
+    start_opened = switch_bits.get(start, 0)
 
-    best = {(start, start_mask, 0): 0}
-    heap = [(0, start, start_mask, 0)]
+    best = {(start, start_mask, 0, start_opened): 0}
+    heap = [(0, start, start_mask, 0, start_opened)]
     best_full = INF
     while heap:
-        cost, cell, mask, used = heapq.heappop(heap)
-        if cost > best.get((cell, mask, used), INF):
+        cost, cell, mask, used, opened = heapq.heappop(heap)
+        if cost > best.get((cell, mask, used, opened), INF):
             continue
         if cost >= best_full:
             break
@@ -646,20 +754,23 @@ def min_steps(start, targets, walkable, ice=frozenset(), bridges=frozenset()):
             nxt = (cell[0] + direction[0], cell[1] + direction[1])
             if bridge_step_blocked(nxt, bridge_index, used):
                 continue
+            if gate_blocked(nxt, region_of, region_bits, opened):
+                continue
             step = slide_step(cell, direction, walkable, ice)
             if step is None:
                 continue
             other, step_cost = step
             new_used = used | bridge_index.get(cell, 0)
+            new_opened = opened | switch_bits.get(nxt, 0) | switch_bits.get(other, 0)
             new_mask = mask | (1 << index_of[other]) if other in index_of else mask
             new_cost = cost + step_cost
             if new_mask == full:
                 best_full = min(best_full, new_cost)
                 continue
-            key = (other, new_mask, new_used)
+            key = (other, new_mask, new_used, new_opened)
             if new_cost < best.get(key, INF):
                 best[key] = new_cost
-                heapq.heappush(heap, (new_cost, other, new_mask, new_used))
+                heapq.heappush(heap, (new_cost, other, new_mask, new_used, new_opened))
     return None if best_full == INF else best_full
 
 
@@ -797,6 +908,19 @@ def render_board(level, adv):
             if isinstance(plate, tuple):
                 plates.add(plate)
 
+    gate_switches = set()
+    gate_cells = set()
+    for gate in (adv.get("gates") or []) if adv else []:
+        if not isinstance(gate, dict):
+            continue
+        switch = as_cell(gate.get("switch"))
+        if isinstance(switch, tuple):
+            gate_switches.add(switch)
+        for cell in gate.get("cells") or []:
+            cell = as_cell(cell)
+            if isinstance(cell, tuple):
+                gate_cells.add(cell)
+
     lines = []
     for row in range(SIZE):
         region_line = []
@@ -805,6 +929,9 @@ def render_board(level, adv):
             cell = (row, col)
             region_line.append(str(regions[row][col]))
             symbol = "."
+            # 围栏区域先铺底色，正解格、道具、宝箱等会盖在它上面
+            if cell in gate_cells:
+                symbol = "|"
             if cell in ice_cells:
                 symbol = "~"
             if cell in bridge_cells:
@@ -823,6 +950,8 @@ def render_board(level, adv):
                 symbol = "#"
             if cell in plates:
                 symbol = "P"
+            if cell in gate_switches:
+                symbol = "G"
             if cell in boxes:
                 symbol = "B"
             if cell in patrol_paths:
@@ -844,7 +973,7 @@ def describe(level, adv, minimum, computed_par):
                     "无法到达" if minimum is None else minimum,
                     "?" if computed_par is None else computed_par,
                     (level.get("adventure") or {}).get("par", "?")))
-    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线  B 木箱  P 压力板  ~ 冰面  = 木桥")
+    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线  B 木箱  P 压力板  ~ 冰面  = 木桥  | 围栏内  G 围栏开关")
     for line in render_board(level, adv):
         lines.append(line)
     if adv:
@@ -867,6 +996,10 @@ def describe(level, adv, minimum, computed_par):
         bridges = "、".join("(%d,%d)" % tuple(cell) for cell in adv.get("bridges") or [])
         if bridges:
             lines.append("    木桥：%s" % bridges)
+        gates = "、".join("色区 %d 开关(%d,%d)" % (gate["region"], gate["switch"][0], gate["switch"][1])
+                          for gate in adv.get("gates") or [])
+        if gates:
+            lines.append("    围栏：%s" % gates)
     return lines
 
 
@@ -905,7 +1038,8 @@ def validate(data, verbose=True):
             walkable = walkable_cells(adv["obstacles"])
             ice = set(adv.get("ice") or [])
             bridges = set(adv.get("bridges") or [])
-            reached = reachable(adv["start"], walkable, ice, bridges)
+            gates = adv.get("gates") or []
+            reached = reachable(adv["start"], walkable, ice, bridges, gates)
             boxes = adv.get("boxes") or []
             if boxes:
                 # 有木箱时不能按「静态障碍」算可达性：木箱是可移动的，
@@ -940,7 +1074,7 @@ def validate(data, verbose=True):
                     level_errors.append("adventure.chests[%d] 的符文顺序走不通："
                                         "必须先踩后面才该踩的符文才能到达" % index)
             if not missing:
-                minimum = min_steps(adv["start"], targets, walkable, ice, bridges)
+                minimum = min_steps(adv["start"], targets, walkable, ice, bridges, gates)
                 if minimum is not None:
                     computed_par = par_from(minimum)
                     if isinstance(adv["par"], int) and adv["par"] != computed_par:

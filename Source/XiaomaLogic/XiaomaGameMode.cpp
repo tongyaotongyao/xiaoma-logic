@@ -2,6 +2,7 @@
 
 #include "XiaomaBoardActor.h"
 #include "XiaomaBridge.h"
+#include "XiaomaGate.h"
 #include "XiaomaHerdsman.h"
 #include "XiaomaHUDWidget.h"
 #include "XiaomaIceField.h"
@@ -698,6 +699,35 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Mechanisms.Add(Bridge);
         }
     }
+    // 围栏同样排在最后（木桥之后）：机关状态按 Mechanisms 下标写进存档，
+    // 新类型只往后追加，老关卡没有围栏，已有续局的下标才不会被顶歪
+    for (const FXiaomaGateDef& GateDef : Level->Adventure.Gates)
+    {
+        TArray<FIntPoint> RegionCells;
+        for (int32 Row = 0; Row < FXiaomaPuzzle::Size; ++Row)
+        {
+            for (int32 Column = 0; Column < FXiaomaPuzzle::Size; ++Column)
+            {
+                if (Level->RegionAt(Row, Column) == GateDef.Region)
+                {
+                    RegionCells.Add(FIntPoint(Row, Column));
+                }
+            }
+        }
+        // 空区域不生成：否则场上会留一块踩了没反应的踏板
+        if (RegionCells.Num() == 0)
+        {
+            continue;
+        }
+        AXiaomaGate* Gate = GetWorld()->SpawnActor<AXiaomaGate>(AXiaomaGate::StaticClass());
+        if (Gate)
+        {
+            Gate->SetupGate(GateDef, RegionCells, Board);
+            Gate->SetOnOpened(FXiaomaGateOpenedDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnGateOpened));
+            Mechanisms.Add(Gate);
+        }
+    }
     NotifyMechanismsBoardChanged();
     RefreshPushPlates(false);
 }
@@ -769,6 +799,8 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     }
     // 读档把主角放到上次站的位置，桥要知道人是不是正好站在它上面
     SyncBridgeOccupancy();
+    // 存档若留下"人在围栏里、门却关着"的组合，这里直接开门，别让人卡死
+    EnsureGateConsistency();
 
     StatusMessage = TEXT("WASD 移动，E 打开召唤轮盘或开箱，F 标记排除，Tab 看全局");
     BoardInputReadyAt = FPlatformTime::Seconds() + 0.25;
@@ -895,6 +927,56 @@ void AXiaomaGameMode::SyncBridgeOccupancy()
         }
     }
 }
+
+void AXiaomaGameMode::OnGateOpened(AXiaomaGate* Gate)
+{
+    if (Screen != EXiaomaScreen::Playing || !Gate)
+    {
+        return;
+    }
+    // 此刻门还关着：快照记的是"没开门"的那一瞬间，按 Z 能把门关回去
+    PushUndoSnapshot();
+    if (UndoHistory.Num() > 0)
+    {
+        // 把这条快照改成"踩开关之前"：人退回上一格、步数退回上一步。
+        // 踩开关那一步在 OnHerdsmanCellChanged 里已经计入，所以减 1 正好抵消；
+        // 这样一次撤销 = 这次开门没发生，门复原、人和步数一起回去。
+        FXiaomaUndoSnapshot& Snap = UndoHistory.Last();
+        const FIntPoint From = Herdsman ? Herdsman->GetPreviousCell() : Gate->GetSwitchCell();
+        if (From != Gate->GetSwitchCell())
+        {
+            Snap.HerdsmanCell = From;
+            Snap.StepCount = FMath::Max(0, Snap.StepCount - 1);
+        }
+    }
+    StatusMessage = TEXT("围栏打开了，这个色区现在可以进去（按 Z 可以回到踩开关之前）");
+    if (GameWidget)
+    {
+        GameWidget->Refresh();
+    }
+}
+
+void AXiaomaGameMode::EnsureGateConsistency()
+{
+    if (!Herdsman)
+    {
+        return;
+    }
+    // 只在"人已经在栏内、门却关着"时动手：这是存档不一致才会出现的组合，
+    // 开门不广播、不压快照，恢复路径上绝不能往历史栈里塞东西
+    const FIntPoint Cell = Herdsman->GetCurrentCell();
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (AXiaomaGate* Gate = Cast<AXiaomaGate>(Mech))
+        {
+            if (!Gate->IsOpen() && Gate->IsRegionCell(Cell))
+            {
+                Gate->ForceOpen();
+            }
+        }
+    }
+}
+
 
 void AXiaomaGameMode::OnHerdsmanCellChanged(FIntPoint NewCell)
 {
@@ -1491,6 +1573,8 @@ void AXiaomaGameMode::Undo()
     NotifyMechanismsBoardChanged();
     // 撤销把主角搬回快照格，桥的"人还在桥上吗"得跟着重算，否则下一步会误塌
     SyncBridgeOccupancy();
+    // 门的状态来自快照；万一快照组出了"人在栏内、门关着"，这里兜底开门
+    EnsureGateConsistency();
     // 木箱可能被撤回到压力板之外，压力板视觉要跟着回去
     RefreshPushPlates(false);
     StatusMessage = TEXT("已撤销上一步");

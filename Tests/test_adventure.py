@@ -23,6 +23,19 @@ def solution_cells(level):
     return {(row, level["solution"][row]) for row in range(va.SIZE)}
 
 
+def gates_of(level):
+    """把 JSON 里的 gates 补上区域格，变成 BFS 用的形状（与 check_adventure 输出一致）。"""
+    regions = level["regions"]
+    gates = []
+    for gate in adventure(level).get("gates") or []:
+        cells = [(row, col) for row in range(va.SIZE) for col in range(va.SIZE)
+                 if regions[row][col] == gate["region"]]
+        gates.append({"region": gate["region"],
+                      "switch": va.as_cell(gate["switch"]),
+                      "cells": cells})
+    return gates
+
+
 class AdventureDataTests(unittest.TestCase):
     def test_all_levels_validate_without_errors(self):
         results, errors, warnings = va.validate(DATA)
@@ -36,7 +49,7 @@ class AdventureDataTests(unittest.TestCase):
             ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
             bridges = {va.as_cell(cell) for cell in adventure(level).get("bridges") or []}
             minimum = va.min_steps(adventure(level)["start"], solution_cells(level),
-                                   walkable, ice, bridges)
+                                   walkable, ice, bridges, gates_of(level))
             self.assertIsNotNone(minimum, level["id"])
             self.assertEqual(adventure(level)["par"], va.par_from(minimum), level["id"])
 
@@ -45,7 +58,7 @@ class AdventureDataTests(unittest.TestCase):
             walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
             ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
             bridges = {va.as_cell(cell) for cell in adventure(level).get("bridges") or []}
-            reached = va.reachable(adventure(level)["start"], walkable, ice, bridges)
+            reached = va.reachable(adventure(level)["start"], walkable, ice, bridges, gates_of(level))
             for cell in solution_cells(level):
                 self.assertIn(cell, reached, (level["id"], cell))
             for chest in adventure(level).get("chests") or []:
@@ -264,6 +277,108 @@ class ValidatorGuardTests(unittest.TestCase):
         _, errors, warnings = va.validate(broken)
         self.assertEqual(errors, [])
         self.assertTrue(any("单格冰" in message for message in warnings), warnings)
+
+
+class GateTests(unittest.TestCase):
+    """色区围栏：封住整个色区，踩区域外的开关后永久打开，不能手动关上。"""
+
+    def test_only_level_21_has_a_gate(self):
+        for level in DATA["levels"][:20]:
+            self.assertFalse(adventure(level).get("gates"), level["id"])
+        self.assertTrue(adventure(DATA["levels"][20]).get("gates"), 21)
+
+    def test_gate_switch_sits_outside_the_region(self):
+        level = DATA["levels"][20]
+        gate = adventure(level)["gates"][0]
+        row, col = gate["switch"]
+        self.assertNotEqual(level["regions"][row][col], gate["region"],
+                            "开关在自己围住的区域里，门关着时根本踩不到")
+
+    def test_gate_surrounds_a_solution_cell(self):
+        # 围栏是唯一允许盖住正解格的阻碍，围不住正解格就只是把地板涂成装饰
+        level = DATA["levels"][20]
+        gate = adventure(level)["gates"][0]
+        solution = level["solution"]
+        inside = [row for row in range(va.SIZE)
+                  if level["regions"][row][solution[row]] == gate["region"]]
+        self.assertTrue(inside, "围栏没有围住任何正解格")
+
+    def test_gate_costs_steps(self):
+        # 开门这一步要真的写进最短路径，否则围栏等于白放
+        level = DATA["levels"][20]
+        adv = adventure(level)
+        walkable = va.walkable_cells(adv.get("obstacles") or [])
+        targets = [(row, level["solution"][row]) for row in range(va.SIZE)]
+        gates = va.check_adventure(copy.deepcopy(level), [], [])["gates"]
+        with_gate = va.min_steps(adv["start"], targets, walkable,
+                                 frozenset(), frozenset(), gates)
+        without = va.min_steps(adv["start"], targets, walkable)
+        self.assertGreater(with_gate, without, "绕去踩开关没有产生任何步数代价")
+
+    def test_closed_gate_blocks_region_cells(self):
+        gates = [{"region": 2, "switch": (3, 3), "cells": [(1, 4), (1, 5), (2, 4), (2, 5)]}]
+        _, region_bits, region_of = va.gate_tables(gates)
+        self.assertTrue(va.gate_blocked((2, 4), region_of, region_bits, 0))
+        self.assertFalse(va.gate_blocked((3, 3), region_of, region_bits, 0),
+                         "开关本身不能被自己的门挡住")
+        self.assertFalse(va.gate_blocked((2, 4), region_of, region_bits, 1))
+
+    def test_switch_inside_region_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        gate = adventure(level)["gates"][0]
+        cell = next((r, c) for r in range(va.SIZE) for c in range(va.SIZE)
+                    if level["regions"][r][c] == gate["region"])
+        gate["switch"] = list(cell)
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("在围栏区域内" in message for message in errors), errors)
+
+    def test_start_inside_region_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        start = adventure(level)["start"]
+        gate = adventure(level)["gates"][0]
+        gate["region"] = level["regions"][start[0]][start[1]]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("起点在围栏区域内" in message for message in errors), errors)
+
+    def test_two_gates_on_one_region_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        gates = adventure(level)["gates"]
+        gates.append({"region": gates[0]["region"], "switch": [4, 4]})
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("围住同一个色区" in message for message in errors), errors)
+
+    def test_patrol_inside_region_is_an_error(self):
+        # 门是动态的、巡逻路线是静态的：让鬼进区域会出现"开门前撞墙、开门后突然进来"
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        adventure(level)["patrols"] = [{"path": [[1, 4], [1, 5]], "speed": 1.5}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("进入围栏区域" in message for message in errors), errors)
+
+    def test_gate_with_ice_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        adventure(level)["ice"] = [[3, 4], [3, 5]]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("色区围栏与冰面" in message for message in errors), errors)
+
+    def test_gate_with_bridge_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        adventure(level)["bridges"] = [[4, 4]]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("色区围栏与塌陷木桥" in message for message in errors), errors)
+
+    def test_switch_on_obstacle_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][20]
+        adventure(level)["obstacles"] = [[4, 4]]
+        adventure(level)["gates"][0]["switch"] = [4, 4]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("switch" in message and "障碍同格" in message for message in errors), errors)
 
 
 class BoxPushTests(unittest.TestCase):
