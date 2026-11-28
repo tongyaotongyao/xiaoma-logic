@@ -368,12 +368,13 @@ class GateTests(unittest.TestCase):
         _, errors, _ = va.validate(broken)
         self.assertTrue(any("色区围栏与冰面" in message for message in errors), errors)
 
-    def test_gate_with_bridge_is_an_error(self):
-        broken = copy.deepcopy(DATA)
-        level = broken["levels"][20]
+    def test_gate_with_bridge_is_allowed(self):
+        """围栏与塌陷木桥可以同关：两个状态掩码在搜索里本来就并存。"""
+        data = copy.deepcopy(DATA)
+        level = data["levels"][20]
         adventure(level)["bridges"] = [[4, 4]]
-        _, errors, _ = va.validate(broken)
-        self.assertTrue(any("色区围栏与塌陷木桥" in message for message in errors), errors)
+        _, errors, _ = va.validate(data)
+        self.assertFalse(any("色区围栏与塌陷木桥" in message for message in errors), errors)
 
     def test_switch_on_obstacle_is_an_error(self):
         broken = copy.deepcopy(DATA)
@@ -382,6 +383,32 @@ class GateTests(unittest.TestCase):
         adventure(level)["gates"][0]["switch"] = [4, 4]
         _, errors, _ = va.validate(broken)
         self.assertTrue(any("switch" in message and "障碍同格" in message for message in errors), errors)
+
+    def test_level_25_gates_are_ordered(self):
+        """25 关两道围栏是有序依赖：后一道的开关在前一道区域内，必须先开前一道。"""
+        level = DATA["levels"][24]
+        gates = gates_of(level)
+        self.assertEqual(len(gates), 2)
+        first, second = gates
+        row, col = second["switch"]
+        self.assertEqual(level["regions"][row][col], first["region"],
+                         "25 关两道围栏之间没有依赖，只是两道并列的门")
+        self.assertNotEqual(level["regions"][row][col], second["region"],
+                            "第二道围栏的开关在自己区域里，永远踩不到")
+
+    def test_ordered_gate_blocks_the_second_region(self):
+        """只开前一道时，后一道围住的区域仍然进不去。"""
+        level = DATA["levels"][24]
+        gates = gates_of(level)
+        adv = adventure(level)
+        walkable = va.walkable_cells(adv.get("obstacles") or [])
+        regions = level["regions"]
+        second_cells = {(r, c) for r in range(va.SIZE) for c in range(va.SIZE)
+                        if regions[r][c] == gates[1]["region"]}
+        # 把第一道门的开关挪到棋盘外（永远踩不到），第二道门也就永远开不了
+        closed_first = [{**gates[0], "switch": (-9, -9)}, gates[1]]
+        reached = va.reachable(adv["start"], walkable, frozenset(), frozenset(), closed_first)
+        self.assertFalse(second_cells & reached, "第一道门没开，第二道围栏的区域却已经进得去")
 
 
 class ChainChestTests(unittest.TestCase):
@@ -407,6 +434,28 @@ class ChainChestTests(unittest.TestCase):
         chest = tuple(adventure(level)["chests"][0]["cell"])
         gate = adventure(level)["gates"][0]
         self.assertEqual(level["regions"][chest[0]][chest[1]], gate["region"])
+
+    def test_levels_23_to_25_use_chains(self):
+        """最后三关是「综合运用」：每关都要有多段链，并且链上不许重复前面的谜题类型。"""
+        expected = {
+            23: ["rule", "runes"],
+            24: ["stele", "rule"],
+            25: ["stele", "runes", "rule"],
+        }
+        for level_id, chain in expected.items():
+            level = DATA["levels"][level_id - 1]
+            chest = adventure(level)["chests"][0]
+            stages = [stage.get("type") for stage in va.puzzle_stages(chest["puzzle"])]
+            self.assertEqual(stages, chain, level_id)
+
+    def test_stele_is_never_the_second_stage(self):
+        """石碑段要求宝箱处于「埋着」状态，放第二段会让宝箱凭空消失。"""
+        for level in DATA["levels"]:
+            for chest in adventure(level).get("chests") or []:
+                stages = list(va.puzzle_stages(chest.get("puzzle") or {}))
+                for index, stage in enumerate(stages):
+                    if stage.get("type") == "stele":
+                        self.assertEqual(index, 0, "第 %s 关的石碑段不在第一段" % level["id"])
 
     def test_third_star_needs_every_chest(self):
         """par 必须把宝箱路线算进去，否则「步数达标 + 集齐」不可能同时满足。"""
@@ -504,6 +553,16 @@ class IceSlideTests(unittest.TestCase):
         self.assertEqual(va.min_steps((0, 0), [(0, 5)], walkable), 5)
         self.assertEqual(va.min_steps((0, 0), [(0, 5)], walkable, ice), 5)
 
+    def test_ice_on_solution_cell_is_an_error(self):
+        """冰面盖住正解格就没法站定放小马，这一格等于被封死。"""
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][15]
+        row = 0
+        col = level["solution"][row]
+        adventure(level)["ice"] = [[row, col], [row + 1, col]]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("冰面" in message and "正解格" in message for message in errors), errors)
+
 
 class PuzzlePacingTests(unittest.TestCase):
     """第 3~10 关该出现哪种开箱谜题，节奏表别被后面的改动冲掉。"""
@@ -567,14 +626,28 @@ class PuzzlePacingTests(unittest.TestCase):
         for level in DATA["levels"][15:17]:
             self.assertTrue(adventure(level).get("ice"), level["id"])
 
-    def test_level_seventeen_needs_the_ice(self):
-        """第 17 关有一块正解格只能靠滑到墙边才停得住，冰面不是装饰。"""
+    def test_level_seventeen_ice_slides_far(self):
+        """17 关的冰面要真滑得起来：至少存在一条一次滑 3 格以上的路线。
+
+        不能拿「把冰面当墙就走不到正解格」当判据——那只在冰面压住正解格时成立，
+        正是我们要禁掉的情况。这里改成直接量滑行距离。
+        """
         level = DATA["levels"][16]
         adv = adventure(level)
         ice = {va.as_cell(cell) for cell in adv["ice"]}
-        frozen = va.walkable_cells(adv.get("obstacles") or []) - ice
-        reached = va.reachable(adv["start"], frozen)
-        self.assertTrue(set(solution_cells(level)) - reached, "把冰面当墙就通不了关")
+        walkable = va.walkable_cells(adv.get("obstacles") or [])
+        solution = set(solution_cells(level))
+        self.assertFalse(ice & solution, "17 关冰面压住正解格")
+        longest = 0
+        for cell in ice:
+            for direction in va.DIRECTIONS:
+                entry = (cell[0] - direction[0], cell[1] - direction[1])
+                if entry not in walkable or entry in ice:
+                    continue
+                step = va.slide_step(entry, direction, walkable, ice)
+                if step:
+                    longest = max(longest, step[1])
+        self.assertGreaterEqual(longest, 3, "17 关的冰面滑不起来，等于没有")
 
 
 class BridgeTests(unittest.TestCase):

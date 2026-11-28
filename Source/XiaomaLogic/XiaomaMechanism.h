@@ -157,6 +157,8 @@ private:
     void CompleteActiveStage(const FString& Prefix = FString());
     /** 这一格是不是"还没轮到"的后续段符文格 */
     bool IsFutureRuneCell(FIntPoint Cell) const;
+    /** 规则开箱的行/列高亮：当前段要"某一行/列摆对"时，在那条线两侧的地板缝里嵌两条金线 */
+    void RefreshLineHint();
     void RefreshVisuals();
     void RefreshRuneVisuals(int32 StageNum);
     void BuildStageVisuals(int32 StageNum);
@@ -194,6 +196,13 @@ private:
 
     UPROPERTY()
     TObjectPtr<UMaterialInstanceDynamic> GemMaterial;
+
+    /**
+     * 行/列高亮的两条金线。运行时第一次需要时才建，之后换行换列只改位置与缩放，
+     * 组件数恒为 2，不用销毁重建。
+     */
+    UPROPERTY()
+    TArray<TObjectPtr<UStaticMeshComponent>> LineRails;
 
     /** 每段一套部件，下标与 Def.Stages 对齐 */
     UPROPERTY()

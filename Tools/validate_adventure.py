@@ -312,6 +312,9 @@ def check_adventure(level, errors, warnings):
     if ice_set & obstacle_set:
         errors.append("冰面与障碍同格：%s"
                       % "、".join("(%d,%d)" % cell for cell in sorted(ice_set & obstacle_set)))
+    # 正解格是要站定放小马的地方，冰面一踩就滑走，等于把这个正解格封死了
+    for cell in sorted(ice_set & solution_cells):
+        errors.append("冰面 (%d,%d) 压在正解格上：踩上去会一直滑走，放不了小马" % cell)
     for kind, cell in out["items"]:
         if cell in ice_set:
             errors.append("道具 %s 落在冰面 (%d,%d) 上，主角滑过去就捡不到"
@@ -521,13 +524,14 @@ def check_adventure(level, errors, warnings):
     out["gate_region_cells"] = gate_region_cells
 
     if gates:
-        # 围栏是「区域级开关」，和需要逐格状态的机制叠在一起规则就没法解释了，暂不同关
+        # 冰面与木箱都不能和围栏同关：前者是「滑行会不会冲过关着的门」没定义，
+        # 后者是推箱状态里再叠一层开门状态、搜索维度兜不住。
+        # 塌陷木桥则没有这个问题——桥不改变格子通不通（只是塌了变坑），
+        # 搜索里 `used`（已塌桥）与 `opened`（已开围栏）两个掩码本来就并存。
         if ice_set:
             errors.append("色区围栏与冰面不要放在同一关：滑行会不会冲过关闭的围栏，规则还没定义")
         if boxes:
             errors.append("色区围栏与木箱不要放在同一关：推箱状态里还要再叠一层开门状态，实现前容易算错")
-        if bridge_set:
-            errors.append("色区围栏与塌陷木桥不要放在同一关：桥塌与开门是两套不可逆状态，叠起来暂时不做")
         # 捣蛋鬼的路线是静态数据，门是动态的；让它被门挡住会出现「开门前撞墙、开门后突然进来」
         for index, patrol in enumerate(out["patrols"]):
             inside = sorted(cell for cell in patrol["path"] if cell in gate_region_cells)
@@ -591,8 +595,8 @@ def check_adventure(level, errors, warnings):
         seen_puzzle.add(cell)
     if ice_set and puzzle_cells:
         errors.append("冰面关暂不支持符文/石碑宝箱：滑行会一路滑过符文，踩不准")
-    if bridge_set and puzzle_cells:
-        errors.append("木桥关暂不支持符文/石碑宝箱：边走边塌，符文顺序没法可靠验证")
+    # 塌陷木桥与符文/石碑宝箱可以同关：runes_solvable 已经带上「已塌桥掩码」，
+    # 只要存在一条不塌掉必经桥的顺序就算合法；塌错了玩家自己按 Z 撤销。
     out["puzzle_cells"] = puzzle_cells
     out["chests_raw"] = chests
 
@@ -890,17 +894,21 @@ def box_push_states(start, boxes, walkable, box_blockers):
     return seen
 
 
-def runes_solvable(start, order, walkable):
+def runes_solvable(start, order, walkable, bridges=frozenset()):
     """符文必须按顺序踩，踩到「还没轮到」的符文会全部熄灭。
 
     所以除了可达性，还要确认存在一条路：能依次点亮每个符文，
     且途中不会被迫踩到后面才该踩的符文。
+
+    有塌陷木桥时状态再带上「哪几座桥已经用掉」：桥塌了就永久不能再进，
+    同一格在「桥还在」和「桥已塌」两种历史下的可行性不同，必须分开记。
     """
     start = as_cell(start)
     order = [as_cell(cell) for cell in order]
     if start is None or start not in walkable or not order:
         return False
     index_of = {cell: index for index, cell in enumerate(order)}
+    bridge_index = {as_cell(cell): 1 << index for index, cell in enumerate(sorted(bridges))}
     progress = 0
     if start in index_of:
         if index_of[start] != 0:
@@ -909,13 +917,17 @@ def runes_solvable(start, order, walkable):
     full = len(order)
     if progress == full:
         return True
-    seen = {(start, progress)}
-    todo = deque([(start, progress)])
+    seen = {(start, progress, 0)}
+    todo = deque([(start, progress, 0)])
     while todo:
-        cell, prog = todo.popleft()
+        cell, prog, used = todo.popleft()
         for other in neighbours(*cell):
             if other not in walkable:
                 continue
+            if bridge_step_blocked(other, bridge_index, used):
+                continue
+            # 离开桥格的那一刻桥就塌了
+            new_used = used | bridge_index.get(cell, 0)
             new_prog = prog
             if other in index_of:
                 index = index_of[other]
@@ -925,9 +937,9 @@ def runes_solvable(start, order, walkable):
                     continue  # 踩到还没轮到的符文，必然重来，这条路不可行
             if new_prog == full:
                 return True
-            if (other, new_prog) not in seen:
-                seen.add((other, new_prog))
-                todo.append((other, new_prog))
+            if (other, new_prog, new_used) not in seen:
+                seen.add((other, new_prog, new_used))
+                todo.append((other, new_prog, new_used))
     return False
 
 
@@ -963,12 +975,14 @@ def render_board(level, adv):
         puzzle = chest.get("puzzle_def") or chest.get("puzzle")
         if not isinstance(puzzle, dict):
             continue
-        if puzzle.get("type") == "runes":
-            rune_cells |= {as_cell(cell) for cell in puzzle.get("order") or []}
-        elif puzzle.get("type") == "stele":
-            clue = puzzle.get("clue")
-            if isinstance(clue, dict) and "cell" in clue:
-                stele_cells.add(as_cell(clue["cell"]))
+        # 组合宝箱：then 链上每一段的符文/石碑都要画出来，否则预览会漏掉后半段
+        for stage in puzzle_stages(puzzle):
+            if stage.get("type") == "runes":
+                rune_cells |= {as_cell(cell) for cell in stage.get("order") or []}
+            elif stage.get("type") == "stele":
+                clue = stage.get("clue")
+                if isinstance(clue, dict) and "cell" in clue:
+                    stele_cells.add(as_cell(clue["cell"]))
 
     # adv 可能是 check_adventure 归一化后的结果，也可能是原始 JSON；两种形态都要认
     boxes = set()
@@ -1149,7 +1163,7 @@ def validate(data, verbose=True):
                     if stage.get("type") != "runes":
                         continue
                     order = [as_cell(cell) for cell in stage.get("order") or []]
-                    if order and not runes_solvable(adv["start"], order, walkable):
+                    if order and not runes_solvable(adv["start"], order, walkable, bridges):
                         level_errors.append("adventure.chests[%d].puzzle%sthen 的符文顺序走不通："
                                             "必须先踩后面才该踩的符文才能到达" % (index, ".then" * depth))
 

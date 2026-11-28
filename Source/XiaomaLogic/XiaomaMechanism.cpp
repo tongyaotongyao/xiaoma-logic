@@ -12,6 +12,19 @@ namespace
 /** 格子边长，与棋盘、主角保持一致 */
 constexpr float MechCellStep = 112.f;
 
+/** 地板顶面在 z≈8（与围栏、冰面同一套高度基准）；金线贴在地板缝里，只露一点点 */
+constexpr float MechFloorTopZ = 8.f;
+constexpr float MechHintLineZ = MechFloorTopZ + 1.6f;
+/** 截面：宽 5 正好嵌进 4.5 宽的地板缝，高 3.5，走在上面也不会被看成障碍 */
+constexpr float MechHintLineThickness = 0.05f;
+constexpr float MechHintLineHeight = 0.035f;
+
+/** 六色草皮的名字，与 HUD 图例、召唤轮盘保持一致 */
+const TCHAR* RegionColourNames[6] = {
+    TEXT("蓝色"), TEXT("棕色"), TEXT("粉色"),
+    TEXT("红色"), TEXT("黄色"), TEXT("薄荷色")
+};
+
 /** 符文颜色：金黄 / 青蓝 / 紫 / 米白，与六色地板都能区分开 */
 const FColor RuneColours[] = {
     FColor(255, 205, 70),
@@ -596,11 +609,22 @@ FString AXiaomaChest::BuildPrompt() const
     {
         Body = FString(TEXT("把场上的木箱推到铁制压力板上"));
     }
+    else if (Stage->RuleType == EXiaomaChestRuleType::Row)
+    {
+        // RuleIndex 是行号，不是"这一行里的第几格"。旧文案写成"第 x 格"会被读成列号，
+        // 玩家照着数一定数错，所以统一说"把这一行的马摆对"。
+        Body = FString::Printf(TEXT("把第 %d 行的马摆对即可开启"), Stage->RuleIndex + 1);
+    }
+    else if (Stage->RuleType == EXiaomaChestRuleType::Column)
+    {
+        Body = FString::Printf(TEXT("把第 %d 列的马摆对即可开启"), Stage->RuleIndex + 1);
+    }
     else
     {
-        const TCHAR* RuleText = Stage->RuleType == EXiaomaChestRuleType::Row ? TEXT("对应行")
-            : (Stage->RuleType == EXiaomaChestRuleType::Column ? TEXT("对应列") : TEXT("对应颜色区域"));
-        Body = FString::Printf(TEXT("在%s第 %d 格放对小马即可开启"), RuleText, Stage->RuleIndex + 1);
+        // 色区没有"第几"的说法，直接报颜色（宝石这时也已经染成同一个色，两边对得上）
+        const TCHAR* ColourName = Stage->RuleIndex >= 0 && Stage->RuleIndex < UE_ARRAY_COUNT(RegionColourNames)
+            ? RegionColourNames[Stage->RuleIndex] : TEXT("对应颜色");
+        Body = FString::Printf(TEXT("把%s草皮上的马摆对即可开启"), ColourName);
     }
     // 多段宝箱把「第几道锁」写在前面，玩家一眼知道还剩几步
     if (Def.Stages.Num() > 1)
@@ -663,6 +687,75 @@ void AXiaomaChest::TryClaim()
     bClaiming = false;
     bClaimed = true;
     RefreshVisuals();
+}
+
+void AXiaomaChest::RefreshLineHint()
+{
+    // 只有「规则开箱 + 指定某一行/列」需要在地板上指出这条线：
+    // 色区块已经靠宝石变色指路，符文/石碑/推箱根本没有"线"这回事。
+    const FXiaomaChestStage* Stage = GetActiveStage();
+    const bool bWantLine = Stage && !bClaimed
+        && Stage->PuzzleType == EXiaomaChestPuzzleType::Rule
+        && Stage->RuleType != EXiaomaChestRuleType::Region
+        && Stage->RuleIndex >= 0 && Stage->RuleIndex < FXiaomaPuzzle::Size;
+
+    if (!bWantLine)
+    {
+        for (const TObjectPtr<UStaticMeshComponent>& Rail : LineRails)
+        {
+            if (Rail)
+            {
+                Rail->SetVisibility(false);
+            }
+        }
+        return;
+    }
+
+    if (LineRails.Num() == 0)
+    {
+        UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+        if (!Cube || !SceneRoot)
+        {
+            return;
+        }
+        // 两条线一次建好，之后换行换列只改位置与缩放，组件数不变
+        const FColor LineColour(226, 180, 82);
+        for (int32 Side = 0; Side < 2; ++Side)
+        {
+            UStaticMeshComponent* Rail = AddMeshPart(this, SceneRoot, TEXT("LineHintRail"), Cube,
+                FVector::ZeroVector, FVector(1.f), LineColour, nullptr);
+            // 组合宝箱换段时要挪位置，静态组件运行时移动会报警，先改成可移动
+            Rail->SetMobility(EComponentMobility::Movable);
+            Rail->SetCastShadow(false);
+            LineRails.Add(Rail);
+        }
+    }
+
+    const int32 Index = Stage->RuleIndex;
+    const bool bRow = Stage->RuleType == EXiaomaChestRuleType::Row;
+    // 行号/列号每加一，世界 Y/X 反而减一格：用"宝箱格 - 目标格"算偏移，与 OffsetFromChest 同一套
+    const FVector Center = bRow
+        ? FVector((Def.Cell.Y - 2.5f) * MechCellStep, (Def.Cell.X - Index) * MechCellStep, MechHintLineZ)
+        : FVector((Def.Cell.Y - Index) * MechCellStep, (Def.Cell.X - 2.5f) * MechCellStep, MechHintLineZ);
+    const FVector LineScale = bRow
+        ? FVector(MechCellStep * 6.f / 100.f, MechHintLineThickness, MechHintLineHeight)
+        : FVector(MechHintLineThickness, MechCellStep * 6.f / 100.f, MechHintLineHeight);
+    // 两条线贴在这一行/列的两侧边缘（±半格），把整条线夹在中间
+    const FVector SideOffset = bRow
+        ? FVector(0.f, MechCellStep * 0.5f, 0.f)
+        : FVector(MechCellStep * 0.5f, 0.f, 0.f);
+
+    for (int32 Side = 0; Side < LineRails.Num(); ++Side)
+    {
+        UStaticMeshComponent* Rail = LineRails[Side];
+        if (!Rail)
+        {
+            continue;
+        }
+        Rail->SetRelativeLocation(Center + (Side == 0 ? SideOffset : -SideOffset));
+        Rail->SetRelativeScale3D(LineScale);
+        Rail->SetVisibility(true);
+    }
 }
 
 void AXiaomaChest::RefreshVisuals()
@@ -729,6 +822,7 @@ void AXiaomaChest::RefreshVisuals()
     }
     // 石碑本体一直留在场上，所以不能整只 Actor 隐藏，只能逐个部件控制
     SetActorHiddenInGame(false);
+    RefreshLineHint();
 }
 
 void AXiaomaChest::SaveState(TArray<uint8>& Out) const

@@ -2064,7 +2064,7 @@
           5,
           0
         ],
-        "par": 28,
+        "par": 25,
         "lives": 2,
         "items": [
           {
@@ -2106,6 +2106,10 @@
         "ice": [
           [
             3,
+            1
+          ],
+          [
+            3,
             2
           ],
           [
@@ -2115,10 +2119,6 @@
           [
             3,
             4
-          ],
-          [
-            3,
-            5
           ],
           [
             2,
@@ -2900,7 +2900,7 @@
           5,
           0
         ],
-        "par": 25,
+        "par": 30,
         "lives": 2,
         "items": [
           {
@@ -2935,9 +2935,42 @@
             "puzzle": {
               "type": "rule",
               "target": "row",
-              "index": 0
+              "index": 0,
+              "then": {
+                "type": "runes",
+                "order": [
+                  [
+                    2,
+                    0
+                  ],
+                  [
+                    3,
+                    0
+                  ]
+                ]
+              }
             }
           }
+        ],
+        "obstacles": [
+          [
+            1,
+            0
+          ],
+          [
+            5,
+            4
+          ]
+        ],
+        "bridges": [
+          [
+            4,
+            0
+          ],
+          [
+            4,
+            4
+          ]
         ]
       }
     },
@@ -3017,7 +3050,7 @@
           5,
           0
         ],
-        "par": 24,
+        "par": 26,
         "lives": 2,
         "items": [
           {
@@ -3045,15 +3078,71 @@
         "chests": [
           {
             "cell": [
-              0,
-              0
+              2,
+              4
             ],
             "reward": "hint",
             "puzzle": {
-              "type": "rule",
-              "target": "row",
-              "index": 0
+              "type": "stele",
+              "clue": {
+                "text": "宝箱埋在右上那条竖走廊里，一圈栏杆把它围住了",
+                "cell": [
+                  5,
+                  2
+                ]
+              },
+              "answer": [
+                2,
+                4
+              ],
+              "then": {
+                "type": "rule",
+                "target": "col",
+                "index": 2
+              }
             }
+          }
+        ],
+        "gates": [
+          {
+            "region": 0,
+            "switch": [
+              2,
+              3
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            3,
+            0
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        "patrols": [
+          {
+            "path": [
+              [
+                4,
+                0
+              ],
+              [
+                4,
+                1
+              ],
+              [
+                4,
+                2
+              ],
+              [
+                4,
+                3
+              ]
+            ],
+            "speed": 1.3
           }
         ]
       }
@@ -3134,7 +3223,7 @@
           5,
           0
         ],
-        "par": 29,
+        "par": 33,
         "lives": 2,
         "items": [
           {
@@ -3167,11 +3256,70 @@
             ],
             "reward": "hint",
             "puzzle": {
-              "type": "rule",
-              "target": "row",
-              "index": 0
+              "type": "stele",
+              "clue": {
+                "text": "宝箱埋在左上角那格，得先开两道栏杆才走得进去",
+                "cell": [
+                  5,
+                  1
+                ]
+              },
+              "answer": [
+                0,
+                0
+              ],
+              "then": {
+                "type": "runes",
+                "order": [
+                  [
+                    3,
+                    2
+                  ],
+                  [
+                    4,
+                    2
+                  ]
+                ],
+                "then": {
+                  "type": "rule",
+                  "target": "col",
+                  "index": 2
+                }
+              }
             }
           }
+        ],
+        "gates": [
+          {
+            "region": 0,
+            "switch": [
+              1,
+              4
+            ]
+          },
+          {
+            "region": 1,
+            "switch": [
+              0,
+              5
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            2,
+            4
+          ]
+        ],
+        "bridges": [
+          [
+            4,
+            3
+          ],
+          [
+            5,
+            3
+          ]
         ]
       }
     }
