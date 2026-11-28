@@ -1193,6 +1193,16 @@ void AXiaomaGameMode::OnPatrollerHitHerdsman(AXiaomaPatroller* Patroller)
     // 被弹回起点本身就是惩罚，之前那几步不该还能按 Z 撤回来（四叶草抵挡时也一样）
     UndoHistory.Reset();
     LoseLife(TEXT("被捣蛋鬼撞到了，弹回起点并失去一条生命"));
+    // 弹回起点不走 OnCellChanged（否则白算一步），所以高亮和 HUD 只能手动补：
+    // 不补的话生命数字停在撞击前、高亮留在被撞那格，要等玩家迈出下一步才一起刷新
+    if (Board && Herdsman)
+    {
+        Board->SetHighlightedCell(Herdsman->GetCurrentCellIndex());
+    }
+    if (Screen == EXiaomaScreen::Playing && GameWidget)
+    {
+        GameWidget->Refresh();
+    }
 }
 
 bool AXiaomaGameMode::CanBoxEnter(FIntPoint Cell, const AXiaomaMechanism* IgnoredBox) const
@@ -1342,8 +1352,18 @@ void AXiaomaGameMode::LoseLife(const FString& Reason)
 
 void AXiaomaGameMode::Undo()
 {
-    if (Screen != EXiaomaScreen::Playing || UndoHistory.IsEmpty())
+    if (Screen != EXiaomaScreen::Playing)
     {
+        return;
+    }
+    if (UndoHistory.IsEmpty())
+    {
+        // 静默返回会让玩家以为按键失灵：撞鬼弹回起点后历史被清空，这里必须给个明确回应
+        StatusMessage = TEXT("没有可以撤销的步骤（被撞回起点后这一步已经无法撤回）");
+        if (GameWidget)
+        {
+            GameWidget->Refresh();
+        }
         return;
     }
     if (bWheelOpen)

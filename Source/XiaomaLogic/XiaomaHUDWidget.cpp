@@ -247,7 +247,17 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
     const FString KHint = Game->GetKeyForAction(EXiaomaBindAction::Hint).GetDisplayName().ToString();
     const FString KUndo = Game->GetKeyForAction(EXiaomaBindAction::Undo).GetDisplayName().ToString();
 
-    AddButton(Panel, FString::Printf(TEXT("撤销  %s"), *KUndo))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnUndo);
+    UButton* UndoButton = AddButton(Panel, FString::Printf(TEXT("撤销  %s"), *KUndo));
+    UndoButton->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnUndo);
+    if (!Game->CanUndo())
+    {
+        // 历史为空时按钮点了也没反应，干脆置灰并把字压暗，别让玩家以为按键坏了
+        UndoButton->SetIsEnabled(false);
+        if (UTextBlock* UndoLabel = Cast<UTextBlock>(UndoButton->GetChildAt(0)))
+        {
+            UndoLabel->SetColorAndOpacity(FSlateColor(Muted));
+        }
+    }
     AddButton(Panel, TEXT("重开  R"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRestart);
     AddButton(Panel, FString::Printf(TEXT("提示星 (%d)  %s"), Game->GetHintTokens(), *KHint))
         ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnHint);

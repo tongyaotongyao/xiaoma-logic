@@ -105,6 +105,8 @@ public:
     bool IsSummonWheelOpen() const { return bWheelOpen; }
 
     void Undo();
+    /** 历史为空时（撞鬼弹回、刚开局、刚清盘）撤销键点了也没用，HUD 据此置灰 */
+    bool CanUndo() const { return UndoHistory.Num() > 0; }
     void UseHint();
     void SubmitAnswer();
     void ToggleSound();
