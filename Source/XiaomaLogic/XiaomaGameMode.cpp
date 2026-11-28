@@ -1,9 +1,13 @@
 #include "XiaomaGameMode.h"
 
 #include "XiaomaBoardActor.h"
+#include "XiaomaBridge.h"
+#include "XiaomaGate.h"
 #include "XiaomaHerdsman.h"
 #include "XiaomaHUDWidget.h"
+#include "XiaomaIceField.h"
 #include "XiaomaMechanism.h"
+#include "XiaomaPatroller.h"
 #include "XiaomaPickup.h"
 #include "XiaomaPlayerController.h"
 #include "XiaomaSaveGame.h"
@@ -26,6 +30,8 @@ namespace
 const FString SaveSlot = TEXT("XiaomaLogicProgress");
 const FVector TableCamera(280.f, -470.f, 1200.f);
 const FVector TableFocus(280.f, 280.f, 0.f);
+/** 走格子触发的存盘最小间隔：玩家连续跑动时最多每两秒写一次盘 */
+constexpr double RoundSaveIntervalSeconds = 2.0;
 }
 
 AXiaomaGameMode::AXiaomaGameMode()
@@ -56,6 +62,19 @@ void AXiaomaGameMode::BeginPlay()
     if (Progress)
     {
         Progress->MigrateLevelRevision();
+        // 轮盘里只有当前格颜色放得上去，等于让玩家自己挑错误答案；默认改成直接放当前色
+        Progress->MigrateSummonMode();
+        // 解锁进度被回退或存档异常时，续局关卡不能越过已经解锁的范围
+        Progress->ActiveLevel = FMath::Clamp(Progress->ActiveLevel, 1, FMath::Max(1, Progress->UnlockedLevel));
+        // 关卡数据改过（机关、宝箱谜题或道具布局变了）时，旧续局里的机关状态会错位，整局丢弃
+        if (Progress->bHasActiveRound
+            && (!Levels.IsValidIndex(Progress->ActiveLevel - 1)
+                || Progress->ActiveLevelFingerprint
+                    != FXiaomaPuzzle::AdventureFingerprint(Levels[Progress->ActiveLevel - 1])))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("续局与当前关卡布局不一致，已丢弃进行中的对局"));
+            Progress->ClearActiveRound();
+        }
     }
 
     Board = GetWorld()->SpawnActor<AXiaomaBoardActor>(AXiaomaBoardActor::StaticClass());
@@ -71,6 +90,8 @@ void AXiaomaGameMode::BeginPlay()
     {
         Herdsman->SetOnCellChanged(FXiaomaHerdsmanCellDelegate::CreateUObject(
             this, &AXiaomaGameMode::OnHerdsmanCellChanged));
+        Herdsman->SetOnSlideBegin(FXiaomaHerdsmanSlideDelegate::CreateUObject(
+            this, &AXiaomaGameMode::OnHerdsmanSlideBegin));
         Herdsman->SetActorHiddenInGame(true);
         Herdsman->SetMovementEnabled(false);
     }
@@ -100,15 +121,43 @@ void AXiaomaGameMode::BeginPlay()
     SetScreen(EXiaomaScreen::Menu);
 }
 
+void AXiaomaGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // 直接关窗口时不会有暂停/回菜单，只能在这里补一次落盘；没脏就不重复写
+    if (Screen == EXiaomaScreen::Playing && Progress && Progress->bHasActiveRound && bRoundDirty)
+    {
+        SaveProgress();
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
 const FXiaomaLevel* AXiaomaGameMode::GetCurrentLevel() const
 {
     return Levels.IsValidIndex(CurrentLevelIndex) ? &Levels[CurrentLevelIndex] : nullptr;
 }
 
+bool AXiaomaGameMode::IsCellBlocked(FIntPoint Cell) const
+{
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (Mech && Mech->BlocksCell(Cell))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AXiaomaGameMode::IsIceCell(FIntPoint Cell) const
+{
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    return Level && Level->Adventure.Ice.Contains(Cell);
+}
+
 int32 AXiaomaGameMode::GetUnlockedLevel() const { return Progress ? Progress->UnlockedLevel : 1; }
 int32 AXiaomaGameMode::GetContinueLevel() const
 {
-    return Progress && Progress->bHasActiveRound ? Progress->ActiveLevel : GetUnlockedLevel();
+    return Progress ? Progress->GetContinueLevel(Levels.Num()) : 1;
 }
 int32 AXiaomaGameMode::GetParSteps() const
 {
@@ -128,6 +177,30 @@ int32 AXiaomaGameMode::GetLevelStars(int32 LevelNumber) const
         ? Progress->StarsByLevel[LevelNumber - 1] : 0;
 }
 int32 AXiaomaGameMode::GetCurrentStars() const { return GetLevelStars(GetLevelNumber()); }
+
+int32 AXiaomaGameMode::GetChestCount() const
+{
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    return Level ? Level->Adventure.Chests.Num() : 0;
+}
+
+int32 AXiaomaGameMode::GetOpenedChestCount() const
+{
+    // 不另存计数：撤销会把宝箱退回未开，读档也是从机关状态恢复的，
+    // 数一遍真实状态永远和画面一致，比维护一个计数器可靠。
+    int32 Opened = 0;
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (const AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech))
+        {
+            if (Chest->IsClaimed())
+            {
+                ++Opened;
+            }
+        }
+    }
+    return Opened;
+}
 
 bool AXiaomaGameMode::IsSoundEnabled() const
 {
@@ -181,23 +254,125 @@ void AXiaomaGameMode::PlayFeedback(const TCHAR* Name)
 
 void AXiaomaGameMode::SaveProgress()
 {
-    if (Progress)
+    if (!Progress)
     {
-        if (Screen == EXiaomaScreen::Playing && CurrentLevelIndex >= 0)
-        {
-            Progress->bHasActiveRound = true;
-            Progress->ActiveLevel = CurrentLevelIndex + 1;
-            Progress->ActiveCells = Cells;
-            Progress->ActiveHintsUsed = HintsUsed;
-            Progress->ActiveWrongAttempts = WrongAttempts;
-            Progress->Lives = CurrentLives;
-        }
-        UGameplayStatics::SaveGameToSlot(Progress, SaveSlot, 0);
+        return;
     }
+    CaptureActiveRound();
+    bRoundDirty = false;
+    LastRoundSaveAt = FPlatformTime::Seconds();
+    UGameplayStatics::SaveGameToSlot(Progress, SaveSlot, 0);
+}
+
+bool AXiaomaGameMode::CanResumeActiveRound(const FXiaomaLevel& Level) const
+{
+    return Progress && Progress->CanResume(Level);
+}
+
+void AXiaomaGameMode::CaptureActiveRound()
+{
+    if (!Progress || Screen != EXiaomaScreen::Playing || !Levels.IsValidIndex(CurrentLevelIndex))
+    {
+        return;
+    }
+    const FXiaomaLevel& Level = Levels[CurrentLevelIndex];
+    Progress->bHasActiveRound = true;
+    Progress->ActiveLevel = CurrentLevelIndex + 1;
+    Progress->ActiveCells = Cells;
+    Progress->ActiveStepCount = StepCount;
+    Progress->ActiveHintsUsed = HintsUsed;
+    Progress->ActiveWrongAttempts = WrongAttempts;
+    Progress->ActiveHintTokens = HintTokens;
+    Progress->ActivePettedMask = PettedMask;
+    Progress->ActiveHasClover = bHasClover;
+    Progress->ActiveHerdsmanCell = Herdsman ? Herdsman->GetCurrentCell() : Level.Adventure.StartCell;
+    Progress->ActiveLevelFingerprint = FXiaomaPuzzle::AdventureFingerprint(Level);
+    Progress->Lives = CurrentLives;
+
+    Progress->ActivePickupCollected.Reset();
+    for (const AXiaomaPickup* Pickup : Pickups)
+    {
+        Progress->ActivePickupCollected.Add(Pickup && Pickup->IsCollected());
+    }
+
+    TArray<TArray<uint8>> States;
+    States.Reserve(Mechanisms.Num());
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        TArray<uint8> State;
+        if (Mech)
+        {
+            Mech->SaveState(State);
+        }
+        States.Add(MoveTemp(State));
+    }
+    FXiaomaMechanismStateCodec::Encode(States, Progress->ActiveMechanismStates);
+}
+
+void AXiaomaGameMode::RestoreActiveRound(const FXiaomaLevel& Level)
+{
+    if (!Progress)
+    {
+        return;
+    }
+    StepCount = FMath::Max(0, Progress->ActiveStepCount);
+    HintTokens = FMath::Max(0, Progress->ActiveHintTokens);
+    PettedMask = Progress->ActivePettedMask;
+    bHasClover = Progress->ActiveHasClover;
+
+    TArray<TArray<uint8>> States;
+    if (!FXiaomaMechanismStateCodec::Decode(Progress->ActiveMechanismStates, States))
+    {
+        // 状态流损坏：整关按新开局处理，不要恢复出一半正常一半诡异的机关
+        UE_LOG(LogTemp, Warning, TEXT("机关状态数据损坏，本关按新开局处理"));
+        Progress->ClearActiveRound();
+        ResetBoard();
+        StepCount = 0;
+        HintTokens = 0;
+        PettedMask = 0;
+        bHasClover = false;
+        CurrentLives = Level.Adventure.StartLives;
+        Progress->Lives = CurrentLives;
+        for (AXiaomaPickup* Pickup : Pickups)
+        {
+            if (Pickup) Pickup->SetCollected(false);
+        }
+        if (Herdsman)
+        {
+            Herdsman->TeleportToCell(Level.Adventure.StartCell);
+        }
+        // 棋盘刚被清空，让规则宝箱跟着回到未解锁状态
+        NotifyMechanismsBoardChanged();
+        return;
+    }
+
+    for (int32 Index = 0; Index < Pickups.Num() && Index < Progress->ActivePickupCollected.Num(); ++Index)
+    {
+        if (Pickups[Index])
+        {
+            Pickups[Index]->SetCollected(Progress->ActivePickupCollected[Index]);
+        }
+    }
+    for (int32 Index = 0; Index < Mechanisms.Num() && Index < States.Num(); ++Index)
+    {
+        if (Mechanisms[Index])
+        {
+            Mechanisms[Index]->LoadState(States[Index]);
+        }
+    }
+    // 木箱位置是从存档读回来的，压力板视觉按它重算一遍
+    RefreshPushPlates(false);
 }
 
 void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
 {
+    // 离开进行中状态（暂停、通关、失败、回菜单）之前先落盘，避免最近几格移动丢掉。
+    // 通关/失败时 bHasActiveRound 已被置为 false，这里不会把已结束的对局又写回去。
+    if (Screen == EXiaomaScreen::Playing && NewScreen != EXiaomaScreen::Playing
+        && Progress && Progress->bHasActiveRound)
+    {
+        SaveProgress();
+    }
     Screen = NewScreen;
     if (bWheelOpen)
     {
@@ -211,6 +386,15 @@ void AXiaomaGameMode::SetScreen(EXiaomaScreen NewScreen)
         Herdsman->SetActorHiddenInGame(!bPlaying && NewScreen != EXiaomaScreen::Paused
             && NewScreen != EXiaomaScreen::Won && NewScreen != EXiaomaScreen::Lost);
         Herdsman->SetMovementEnabled(bPlaying);
+    }
+
+    // 暂停、菜单、结算时捣蛋鬼也停住，否则会在暂停界面里继续走动甚至撞人
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (AXiaomaPatroller* Patroller = Cast<AXiaomaPatroller>(Mech))
+        {
+            Patroller->SetPatrolEnabled(bPlaying);
+        }
     }
 
     APlayerController* Controller = UGameplayStatics::GetPlayerController(this, 0);
@@ -440,6 +624,12 @@ void AXiaomaGameMode::ClearAdventureActors()
         if (Pickup) Pickup->Destroy();
     }
     Pickups.Reset();
+
+    if (IceField)
+    {
+        IceField->Destroy();
+        IceField = nullptr;
+    }
 }
 
 void AXiaomaGameMode::SpawnAdventureActors()
@@ -450,6 +640,26 @@ void AXiaomaGameMode::SpawnAdventureActors()
     {
         return;
     }
+    // 冰面只是地形装饰，先铺好再放机关，读档/撤销都不用管它
+    if (Level->Adventure.Ice.Num() > 0)
+    {
+        IceField = GetWorld()->SpawnActor<AXiaomaIceField>(AXiaomaIceField::StaticClass());
+        if (IceField)
+        {
+            IceField->SetupIce(Level->Adventure.Ice, Board);
+        }
+    }
+    for (const FIntPoint& ObstacleCell : Level->Adventure.Obstacles)
+    {
+        AXiaomaObstacle* Obstacle = GetWorld()->SpawnActor<AXiaomaObstacle>(AXiaomaObstacle::StaticClass());
+        if (Obstacle)
+        {
+            // 按格子序号轮换外观，让同一关里不出现一模一样的石头
+            const int32 Variant = ObstacleCell.X * FXiaomaPuzzle::Size + ObstacleCell.Y;
+            Obstacle->SetupObstacle(ObstacleCell, Board->GetCellWorldLocation(ObstacleCell), Variant);
+            Mechanisms.Add(Obstacle);
+        }
+    }
     for (const FXiaomaChestDef& ChestDef : Level->Adventure.Chests)
     {
         AXiaomaChest* Chest = GetWorld()->SpawnActor<AXiaomaChest>(AXiaomaChest::StaticClass());
@@ -458,7 +668,19 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Chest->SetupChest(ChestDef, Board->GetCellWorldLocation(ChestDef.Cell));
             Chest->SetOnOpened(FXiaomaChestOpenedDelegate::CreateUObject(
                 this, &AXiaomaGameMode::OnChestOpened));
+            Chest->SetOnNotice(FXiaomaChestNoticeDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnChestNotice));
             Mechanisms.Add(Chest);
+        }
+    }
+    // 木箱排在宝箱之后：撤销/读档按 Mechanisms 下标配位，顺序必须与存档一致
+    for (const FXiaomaBoxDef& BoxDef : Level->Adventure.Boxes)
+    {
+        AXiaomaPushBox* Box = GetWorld()->SpawnActor<AXiaomaPushBox>(AXiaomaPushBox::StaticClass());
+        if (Box)
+        {
+            Box->SetupBox(BoxDef.Cell, Board->GetCellWorldLocation(BoxDef.Cell));
+            Mechanisms.Add(Box);
         }
     }
     for (const FXiaomaItemDef& ItemDef : Level->Adventure.Items)
@@ -472,7 +694,66 @@ void AXiaomaGameMode::SpawnAdventureActors()
             Pickups.Add(Pickup);
         }
     }
+    for (const FXiaomaPatrolDef& PatrolDef : Level->Adventure.Patrols)
+    {
+        AXiaomaPatroller* Patroller = GetWorld()->SpawnActor<AXiaomaPatroller>(AXiaomaPatroller::StaticClass());
+        if (Patroller)
+        {
+            Patroller->SetupPatroller(PatrolDef, Board, Herdsman);
+            Patroller->SetOnHitHerdsman(FXiaomaPatrollerHitDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnPatrollerHitHerdsman));
+            Mechanisms.Add(Patroller);
+        }
+    }
+    // 木桥排在最后生成：机关的 SaveState 是按 Mechanisms 下标写进存档的，
+    // 新类型只有往后追加，老关卡（没有桥）的存档下标才不会被顶歪
+    for (const FIntPoint& BridgeCell : Level->Adventure.Bridges)
+    {
+        AXiaomaBridge* Bridge = GetWorld()->SpawnActor<AXiaomaBridge>(AXiaomaBridge::StaticClass());
+        if (Bridge)
+        {
+            // 连着别的桥格就按"沿列延伸"铺板，孤立一格就随便取一种
+            const bool bAlongColumns = Level->Adventure.Bridges.Contains(FIntPoint(BridgeCell.X, BridgeCell.Y - 1))
+                || Level->Adventure.Bridges.Contains(FIntPoint(BridgeCell.X, BridgeCell.Y + 1));
+            Bridge->SetupBridge(BridgeCell, Board->GetCellWorldLocation(BridgeCell), Board, bAlongColumns);
+            Bridge->SetOnStepped(FXiaomaBridgeSteppedDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnBridgeStepped));
+            Bridge->SetOnCollapsing(FXiaomaBridgeCollapsingDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnBridgeCollapsing));
+            Mechanisms.Add(Bridge);
+        }
+    }
+    // 围栏同样排在最后（木桥之后）：机关状态按 Mechanisms 下标写进存档，
+    // 新类型只往后追加，老关卡没有围栏，已有续局的下标才不会被顶歪
+    for (const FXiaomaGateDef& GateDef : Level->Adventure.Gates)
+    {
+        TArray<FIntPoint> RegionCells;
+        for (int32 Row = 0; Row < FXiaomaPuzzle::Size; ++Row)
+        {
+            for (int32 Column = 0; Column < FXiaomaPuzzle::Size; ++Column)
+            {
+                if (Level->RegionAt(Row, Column) == GateDef.Region)
+                {
+                    RegionCells.Add(FIntPoint(Row, Column));
+                }
+            }
+        }
+        // 空区域不生成：否则场上会留一块踩了没反应的踏板
+        if (RegionCells.Num() == 0)
+        {
+            continue;
+        }
+        AXiaomaGate* Gate = GetWorld()->SpawnActor<AXiaomaGate>(AXiaomaGate::StaticClass());
+        if (Gate)
+        {
+            Gate->SetupGate(GateDef, RegionCells, Board);
+            Gate->SetOnOpened(FXiaomaGateOpenedDelegate::CreateUObject(
+                this, &AXiaomaGameMode::OnGateOpened));
+            Mechanisms.Add(Gate);
+        }
+    }
     NotifyMechanismsBoardChanged();
+    RefreshPushPlates(false);
 }
 
 void AXiaomaGameMode::StartLevel(int32 LevelNumber)
@@ -483,8 +764,9 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     }
     CurrentLevelIndex = LevelNumber - 1;
     const FXiaomaLevel& Level = Levels[CurrentLevelIndex];
-    const bool bResume = Progress->bHasActiveRound && Progress->ActiveLevel == LevelNumber
-        && Progress->ActiveCells.Num() == FXiaomaPuzzle::CellCount && Progress->Lives > 0;
+    const bool bResume = CanResumeActiveRound(Level);
+    // 「继续游戏」要回到玩家真正玩到的地方，不能靠解锁进度猜
+    Progress->LastPlayedLevel = LevelNumber;
 
     HintsUsed = bResume ? Progress->ActiveHintsUsed : 0;
     WrongAttempts = bResume ? Progress->ActiveWrongAttempts : 0;
@@ -494,6 +776,7 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     PettedMask = 0;
     bHasClover = false;
     bOverviewToggleState = false;
+    bRoundDirty = false;
     if (Herdsman) Herdsman->SetOverviewCamera(false);
 
     if (bResume)
@@ -512,14 +795,36 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
     }
     SpawnAdventureActors();
 
+    // 续局时回到上次站的位置，而不是一律回起点
+    FIntPoint SpawnCell = Level.Adventure.StartCell;
+    if (bResume && Progress->ActiveHerdsmanCell.X >= 0 && Progress->ActiveHerdsmanCell.Y >= 0)
+    {
+        SpawnCell = Progress->ActiveHerdsmanCell;
+    }
+
     if (Herdsman)
     {
-        Herdsman->TeleportToCell(Level.Adventure.StartCell);
+        Herdsman->SetCellBlockedPredicate([this](FIntPoint Cell) { return IsCellBlocked(Cell); });
+        Herdsman->SetCellPushHandler(FXiaomaHerdsmanPushDelegate::CreateUObject(
+            this, &AXiaomaGameMode::TryPushBoxAtCell));
+        // 冰面：踩上去就滑，判定表只看当前关的 ice 列表
+        Herdsman->SetIcePredicate([this](FIntPoint Cell) { return IsIceCell(Cell); });
+        Herdsman->TeleportToCell(SpawnCell);
         if (Board)
         {
             Board->SetHighlightedCell(Herdsman->GetCurrentCellIndex());
         }
     }
+
+    if (bResume)
+    {
+        // 机关与道具是在 SpawnAdventureActors 里新建的，必须等它们都就位后再贴存档状态
+        RestoreActiveRound(Level);
+    }
+    // 读档把主角放到上次站的位置，桥要知道人是不是正好站在它上面
+    SyncBridgeOccupancy();
+    // 存档若留下"人在围栏里、门却关着"的组合，这里直接开门，别让人卡死
+    EnsureGateConsistency();
 
     StatusMessage = TEXT("WASD 移动，E 打开召唤轮盘或开箱，F 标记排除，Tab 看全局");
     BoardInputReadyAt = FPlatformTime::Seconds() + 0.25;
@@ -554,7 +859,148 @@ void AXiaomaGameMode::PushUndoSnapshot()
         Snap.MechanismStates.Add(MoveTemp(State));
     }
     UndoHistory.Add(MoveTemp(Snap));
+    // 冰面上每滑一次都要压一条，长时间游玩会把历史堆得很长，给个上限
+    constexpr int32 MaxUndoHistory = 200;
+    if (UndoHistory.Num() > MaxUndoHistory)
+    {
+        UndoHistory.RemoveAt(0, UndoHistory.Num() - MaxUndoHistory);
+    }
 }
+
+void AXiaomaGameMode::OnHerdsmanSlideBegin()
+{
+    if (Screen != EXiaomaScreen::Playing)
+    {
+        return;
+    }
+    // 此时主角刚站上第一块冰格、还没开始位移，快照停在这里正好是“重选方向”的位置
+    PushUndoSnapshot();
+}
+
+void AXiaomaGameMode::OnBridgeStepped(AXiaomaBridge* Bridge)
+{
+    if (Screen != EXiaomaScreen::Playing || !Bridge)
+    {
+        return;
+    }
+    // 记下"从哪一格上的桥"：塌陷后撤销要退到这里。此刻 Herdsman 的 CurrentCell 已经是桥格，
+    // PreviousCell 还停在来路上，所以读得到。
+    if (Herdsman)
+    {
+        const FIntPoint From = Herdsman->GetPreviousCell();
+        Bridge->SetApproachCell(From != Bridge->GetBridgeCell() ? From : Bridge->GetBridgeCell());
+    }
+    // 只给提示，不压快照：桥还没塌，没有需要复原的东西；
+    // 真正的撤销点由 OnBridgeCollapsing 在塌陷那一刻压，一次过桥只对应一条
+    StatusMessage = TEXT("木桥只能走一次：离开这一格就塌了");
+    if (GameWidget)
+    {
+        GameWidget->Refresh();
+    }
+}
+
+void AXiaomaGameMode::OnBridgeCollapsing(AXiaomaBridge* Bridge)
+{
+    if (Screen != EXiaomaScreen::Playing || !Bridge)
+    {
+        return;
+    }
+    // 此刻桥还完好、人已经站到下一格：快照记的是"桥没塌"的那一瞬间
+    PushUndoSnapshot();
+    if (UndoHistory.Num() > 0)
+    {
+        // 把这条快照改成"过桥之前"：人退回来路上那一格，步数也退回上桥前。
+        // 进桥格、离桥格正好两步，所以从当前步数减 2；这样一次撤销 = 这次过桥没发生，
+        // 桥恢复、人和步数都回到原样，可以换条路再走。
+        FXiaomaUndoSnapshot& Snap = UndoHistory.Last();
+        const FIntPoint From = Bridge->GetApproachCell();
+        // 连环木桥：上桥格本身可能是另一座已经塌掉的桥，那就别把人塞进坑里，保留原落点
+        bool bApproachIsPit = false;
+        for (const AXiaomaMechanism* Mech : Mechanisms)
+        {
+            if (Mech && Mech != Bridge && Mech->BlocksCell(From))
+            {
+                bApproachIsPit = true;
+                break;
+            }
+        }
+        if (!bApproachIsPit)
+        {
+            Snap.HerdsmanCell = From;
+            Snap.StepCount = FMath::Max(0, Snap.StepCount - 2);
+        }
+    }
+    StatusMessage = TEXT("木桥塌了（按 Z 可以回到过桥前）");
+}
+
+void AXiaomaGameMode::SyncBridgeOccupancy()
+{
+    if (!Herdsman)
+    {
+        return;
+    }
+    // 只同步"人在不在桥上"。这里绝不能压快照：撤销会把状态恢复成快照里的样子，
+    // 若此时人正好站在完好的桥上、又补压一条，栈顶就被"刚恢复的状态"占住，
+    // 之后再按 Z 只是反复 pop/push 同一个状态，更早的历史永远走不到。
+    const FIntPoint Cell = Herdsman->GetCurrentCell();
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (AXiaomaBridge* Bridge = Cast<AXiaomaBridge>(Mech))
+        {
+            Bridge->SyncHerdsmanCell(Cell);
+        }
+    }
+}
+
+void AXiaomaGameMode::OnGateOpened(AXiaomaGate* Gate)
+{
+    if (Screen != EXiaomaScreen::Playing || !Gate)
+    {
+        return;
+    }
+    // 此刻门还关着：快照记的是"没开门"的那一瞬间，按 Z 能把门关回去
+    PushUndoSnapshot();
+    if (UndoHistory.Num() > 0)
+    {
+        // 把这条快照改成"踩开关之前"：人退回上一格、步数退回上一步。
+        // 踩开关那一步在 OnHerdsmanCellChanged 里已经计入，所以减 1 正好抵消；
+        // 这样一次撤销 = 这次开门没发生，门复原、人和步数一起回去。
+        FXiaomaUndoSnapshot& Snap = UndoHistory.Last();
+        const FIntPoint From = Herdsman ? Herdsman->GetPreviousCell() : Gate->GetSwitchCell();
+        if (From != Gate->GetSwitchCell())
+        {
+            Snap.HerdsmanCell = From;
+            Snap.StepCount = FMath::Max(0, Snap.StepCount - 1);
+        }
+    }
+    StatusMessage = TEXT("围栏打开了，这个色区现在可以进去（按 Z 可以回到踩开关之前）");
+    if (GameWidget)
+    {
+        GameWidget->Refresh();
+    }
+}
+
+void AXiaomaGameMode::EnsureGateConsistency()
+{
+    if (!Herdsman)
+    {
+        return;
+    }
+    // 只在"人已经在栏内、门却关着"时动手：这是存档不一致才会出现的组合，
+    // 开门不广播、不压快照，恢复路径上绝不能往历史栈里塞东西
+    const FIntPoint Cell = Herdsman->GetCurrentCell();
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (AXiaomaGate* Gate = Cast<AXiaomaGate>(Mech))
+        {
+            if (!Gate->IsOpen() && Gate->IsRegionCell(Cell))
+            {
+                Gate->ForceOpen();
+            }
+        }
+    }
+}
+
 
 void AXiaomaGameMode::OnHerdsmanCellChanged(FIntPoint NewCell)
 {
@@ -578,6 +1024,12 @@ void AXiaomaGameMode::OnHerdsmanCellChanged(FIntPoint NewCell)
     if (GameWidget)
     {
         GameWidget->Refresh();
+    }
+    // 走格子会改步数、踩亮符文、拾取道具，这些都不经过其他存档点，只能在这里标脏后节流落盘
+    bRoundDirty = true;
+    if (FPlatformTime::Seconds() - LastRoundSaveAt >= RoundSaveIntervalSeconds)
+    {
+        SaveProgress();
     }
 }
 
@@ -603,14 +1055,28 @@ void AXiaomaGameMode::InteractPressed()
         {
             if (const AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech))
             {
-                if (!Chest->IsUnlocked() && !Chest->IsClaimed())
+                // 石碑格可能属于任何一段（组合宝箱里前一段的石碑也要能念），
+                // 所以这里问 Chest 要"这一格是哪段石碑"，而不是只看第一段。
+                const FXiaomaChestStage* SteleStage = Chest->FindSteleStage(Cell);
+                bool bShowPrompt = false;
+                if (!Chest->IsClaimed() && SteleStage && !SteleStage->ClueText.IsEmpty())
                 {
-                    const FXiaomaChestDef& Def = Chest->GetDef();
-                    const TCHAR* RuleText = Def.RuleType == EXiaomaChestRuleType::Row ? TEXT("对应行")
-                        : (Def.RuleType == EXiaomaChestRuleType::Column ? TEXT("对应列") : TEXT("对应颜色区域"));
-                    StatusMessage = FString::Printf(TEXT("宝箱上锁中：在%s第 %d 格放对小马即可开启"),
-                        RuleText, Def.RuleIndex + 1);
-                    if (GameWidget) GameWidget->Refresh();
+                    // 站在石碑上按 E：念出线索，代替轮盘
+                    StatusMessage = FString::Printf(TEXT("石碑：%s"), *SteleStage->ClueText);
+                    bShowPrompt = true;
+                }
+                else if (!Chest->IsClaimed())
+                {
+                    const FString Prompt = Chest->BuildPrompt();
+                    if (!Prompt.IsEmpty())
+                    {
+                        StatusMessage = Prompt;
+                        bShowPrompt = true;
+                    }
+                }
+                if (bShowPrompt && GameWidget)
+                {
+                    GameWidget->Refresh();
                 }
             }
             return;
@@ -623,6 +1089,15 @@ void AXiaomaGameMode::InteractPressed()
         return;
     }
     const int32 Idx = Cell.X * FXiaomaPuzzle::Size + Cell.Y;
+
+    // 障碍格既不能站人也不能放马，轮盘直接不给开
+    if (IsCellBlocked(Cell))
+    {
+        PlayFeedback(TEXT("Error"));
+        StatusMessage = TEXT("这一格被障碍占住了，换个格子再召唤");
+        if (GameWidget) GameWidget->Refresh();
+        return;
+    }
 
     // 模式 2：直接放置或请回当前地板颜色的小马
     if (GetSummonMode() == EXiaomaSummonMode::DirectRegion)
@@ -715,6 +1190,13 @@ void AXiaomaGameMode::OnWheelSelectColour(int32 ColourIndex)
     {
         return;
     }
+    if (IsCellBlocked(Herdsman->GetCurrentCell()))
+    {
+        PlayFeedback(TEXT("Error"));
+        StatusMessage = TEXT("这一格被障碍占住了，小马进不来");
+        if (GameWidget) GameWidget->Refresh();
+        return;
+    }
     if (Level->Regions[Idx] != ColourIndex)
     {
         if (Board)
@@ -770,6 +1252,8 @@ void AXiaomaGameMode::ToggleMarkAtCurrentCell()
     PushUndoSnapshot();
     Cells[Idx] = Cells[Idx] == 1 ? 0 : 1;
     StatusMessage = Cells[Idx] == 1 ? TEXT("已放置 X 排除标记") : TEXT("已清除 X 排除标记");
+    // 捣蛋鬼要立刻知道标记变了：X 对它是路障
+    NotifyMechanismsBoardChanged();
     RefreshBoardAndUI();
     SaveProgress();
 }
@@ -879,10 +1363,169 @@ void AXiaomaGameMode::OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FStr
     GrantItemReward(Reward, TEXT("开启宝箱"));
 }
 
+void AXiaomaGameMode::OnChestNotice(const FString& Message, bool bPositive)
+{
+    StatusMessage = Message;
+    PlayFeedback(bPositive ? TEXT("Place") : TEXT("Error"));
+    if (GameWidget)
+    {
+        GameWidget->Refresh();
+    }
+}
+
 void AXiaomaGameMode::OnPickupCollected(EXiaomaItemType ItemType, FIntPoint Cell)
 {
     PushUndoSnapshot();
     GrantItemReward(ItemType, TEXT("拾取道具"));
+}
+
+void AXiaomaGameMode::OnPatrollerHitHerdsman(AXiaomaPatroller* Patroller)
+{
+    if (Screen != EXiaomaScreen::Playing || !Herdsman)
+    {
+        return;
+    }
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    if (!Level)
+    {
+        return;
+    }
+    // 先弹回起点再扣命：LoseLife 会立即落盘，存档里记的应该是弹回之后的位置
+    Herdsman->TeleportToCell(Level->Adventure.StartCell);
+    // 传送不走"进入新格"，桥要是不跟着复位，下一步会误判"人刚离开桥"而把桥塌掉
+    SyncBridgeOccupancy();
+    // 被弹回起点本身就是惩罚，之前那几步不该还能按 Z 撤回来（四叶草抵挡时也一样）
+    UndoHistory.Reset();
+    LoseLife(TEXT("被捣蛋鬼撞到了，弹回起点并失去一条生命"));
+    // 弹回起点不走 OnCellChanged（否则白算一步），所以高亮和 HUD 只能手动补：
+    // 不补的话生命数字停在撞击前、高亮留在被撞那格，要等玩家迈出下一步才一起刷新
+    if (Board && Herdsman)
+    {
+        Board->SetHighlightedCell(Herdsman->GetCurrentCellIndex());
+    }
+    if (Screen == EXiaomaScreen::Playing && GameWidget)
+    {
+        GameWidget->Refresh();
+    }
+}
+
+bool AXiaomaGameMode::CanBoxEnter(FIntPoint Cell, const AXiaomaMechanism* IgnoredBox) const
+{
+    if (Cell.X < 0 || Cell.X >= FXiaomaPuzzle::Size || Cell.Y < 0 || Cell.Y >= FXiaomaPuzzle::Size)
+    {
+        return false;
+    }
+    // 宝箱和石碑本身不阻挡走人，但木箱压上去会盖住它们，得单独排掉
+    if (const FXiaomaLevel* Level = GetCurrentLevel())
+    {
+        for (const FXiaomaChestDef& Chest : Level->Adventure.Chests)
+        {
+            if (Chest.Cell == Cell)
+            {
+                return false;
+            }
+            // 组合宝箱的每一段都可能有石碑，全都不能压
+            for (const FXiaomaChestStage& Stage : Chest.Stages)
+            {
+                if (Stage.SteleCell == Cell)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    for (const AXiaomaMechanism* Mech : Mechanisms)
+    {
+        if (Mech && Mech != IgnoredBox && Mech->BlocksCell(Cell))
+        {
+            return false;
+        }
+    }
+    // 没捡的道具被压住就再也拿不到了，直接不许推过去
+    for (const AXiaomaPickup* Pickup : Pickups)
+    {
+        if (Pickup && !Pickup->IsCollected() && Pickup->GetCell() == Cell)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool AXiaomaGameMode::TryPushBoxAtCell(FIntPoint BoxCell, FIntPoint StepDelta)
+{
+    if (Screen != EXiaomaScreen::Playing || !Board)
+    {
+        return false;
+    }
+    AXiaomaPushBox* Box = nullptr;
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        AXiaomaPushBox* Candidate = Cast<AXiaomaPushBox>(Mech);
+        if (Candidate && Candidate->GetCell() == BoxCell)
+        {
+            Box = Candidate;
+            break;
+        }
+    }
+    if (!Box)
+    {
+        return false;
+    }
+    const FIntPoint Target = BoxCell + StepDelta;
+    if (!CanBoxEnter(Target, Box))
+    {
+        return false;
+    }
+    // 推箱会改机关状态，先压快照：此时主角还在箱子后面，撤销能完整回到推之前
+    PushUndoSnapshot();
+    Box->MoveToCell(Target, Board->GetCellWorldLocation(Target));
+    PlayFeedback(TEXT("Place"));
+    RefreshPushPlates(true);
+    bRoundDirty = true;
+    if (GameWidget) GameWidget->Refresh();
+    return true;
+}
+
+void AXiaomaGameMode::RefreshPushPlates(bool bAnnounce)
+{
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    if (!Level)
+    {
+        return;
+    }
+    for (AXiaomaMechanism* Mech : Mechanisms)
+    {
+        AXiaomaChest* Chest = Cast<AXiaomaChest>(Mech);
+        // 组合宝箱只有当"当前这一段"是推箱时才看压力板，其余段这块板不存在
+        if (!Chest || !Chest->IsPushStageActive())
+        {
+            continue;
+        }
+        const FIntPoint Plate = Chest->GetActivePlate();
+        bool bPressed = false;
+        for (const AXiaomaMechanism* Other : Mechanisms)
+        {
+            const AXiaomaPushBox* Box = Cast<AXiaomaPushBox>(Other);
+            if (Box && Box->GetCell() == Plate)
+            {
+                bPressed = true;
+                break;
+            }
+        }
+        Chest->SetPlatePressed(bPressed);
+        // 已推完就别再提示一次：箱子推上推下会反复刷新这块板
+        if (bPressed && !Chest->IsActiveStageComplete() && !Chest->IsClaimed())
+        {
+            // 一次性锁存：之后把箱子推走也不会重新上锁
+            Chest->UnlockByMechanism();
+            if (bAnnounce)
+            {
+                PlayFeedback(TEXT("Win"));
+                StatusMessage = TEXT("木箱压上了压力板，宝箱弹开了——走过去按 E 领取");
+            }
+        }
+    }
 }
 
 void AXiaomaGameMode::LoseLife(const FString& Reason)
@@ -902,6 +1545,8 @@ void AXiaomaGameMode::LoseLife(const FString& Reason)
     }
     ++WrongAttempts;
     PlayFeedback(TEXT("Error"));
+    // 这一命是真的扣掉了：撤销历史一起清空，否则撞一次鬼按个 Z 就能把命和位置都讨回来
+    UndoHistory.Reset();
     CurrentLives = FMath::Max(0, CurrentLives - 1);
     Progress->Lives = CurrentLives;
     if (CurrentLives == 0)
@@ -920,8 +1565,18 @@ void AXiaomaGameMode::LoseLife(const FString& Reason)
 
 void AXiaomaGameMode::Undo()
 {
-    if (Screen != EXiaomaScreen::Playing || UndoHistory.IsEmpty())
+    if (Screen != EXiaomaScreen::Playing)
     {
+        return;
+    }
+    if (UndoHistory.IsEmpty())
+    {
+        // 静默返回会让玩家以为按键失灵：撞鬼弹回起点后历史被清空，这里必须给个明确回应
+        StatusMessage = TEXT("没有可以撤销的步骤（被撞回起点后这一步已经无法撤回）");
+        if (GameWidget)
+        {
+            GameWidget->Refresh();
+        }
         return;
     }
     if (bWheelOpen)
@@ -947,6 +1602,14 @@ void AXiaomaGameMode::Undo()
     {
         if (Mechanisms[I]) Mechanisms[I]->LoadState(Snap.MechanismStates[I]);
     }
+    // Cells 被整体换掉了，捣蛋鬼缓存的标记格也要跟着更新
+    NotifyMechanismsBoardChanged();
+    // 撤销把主角搬回快照格，桥的"人还在桥上吗"得跟着重算，否则下一步会误塌
+    SyncBridgeOccupancy();
+    // 门的状态来自快照；万一快照组出了"人在栏内、门关着"，这里兜底开门
+    EnsureGateConsistency();
+    // 木箱可能被撤回到压力板之外，压力板视觉要跟着回去
+    RefreshPushPlates(false);
     StatusMessage = TEXT("已撤销上一步");
     RefreshBoardAndUI();
     SaveProgress();
@@ -999,9 +1662,15 @@ void AXiaomaGameMode::SubmitAnswer()
     else if (Result == EXiaomaBoardResult::Solved)
     {
         const int32 Par = Level->Adventure.ParSteps;
+        const int32 ChestTotal = GetChestCount();
+        const int32 ChestOpened = GetOpenedChestCount();
         int32 Stars = 1;
         if (StepCount <= Par) ++Stars;
-        if (HintsUsed == 0) ++Stars;
+        // 第三颗星原本是「没用过提示」，但提示星本来就是解谜挣来的奖励，
+        // 奖励拿来用还要扣星，等于让玩家不敢用。改成看「有没有把本关宝箱集齐」：
+        // 开箱从可选补给变成三星必经，链式宝箱才有分量。
+        // 没有宝箱的关（第 1、2 关）自动算集齐，否则永远拿不到三星。
+        if (ChestOpened >= ChestTotal) ++Stars;
 
         Progress->StarsByLevel[CurrentLevelIndex] = FMath::Max(
             Progress->StarsByLevel[CurrentLevelIndex], Stars);
@@ -1012,8 +1681,10 @@ void AXiaomaGameMode::SubmitAnswer()
         PlayFeedback(TEXT("Win"));
         Progress->BestStreak = FMath::Max(Progress->BestStreak, Progress->WinStreak);
         Progress->bHasActiveRound = false;
-        StatusMessage = FString::Printf(TEXT("通关！步数 %d/%d，获得 %d 颗星，好感度 +5"),
-            StepCount, Par, Stars);
+        // 通关后「继续游戏」落到下一关；最后一关则停在最后一关
+        Progress->LastPlayedLevel = FMath::Min(Levels.Num(), CurrentLevelIndex + 2);
+        StatusMessage = FString::Printf(TEXT("通关！步数 %d/%d，宝箱 %d/%d，获得 %d 颗星，好感度 +5"),
+            StepCount, Par, ChestOpened, ChestTotal, Stars);
         SetScreen(EXiaomaScreen::Won);
         if (Board)
         {

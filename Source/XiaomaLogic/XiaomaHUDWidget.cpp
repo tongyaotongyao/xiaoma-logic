@@ -136,7 +136,11 @@ void UXiaomaHUDWidget::BuildMenu(UCanvasPanel* Root)
         AddText(Panel, FString::Printf(TEXT("已解锁第 %d 关 · 好感度 %d"),
             Game->GetUnlockedLevel(), Game->GetAffection()), 16, Gold);
     }
-    AddButton(Panel, TEXT("继续游戏"), true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPlay);
+    // 按钮直接写出要进哪一关：既省掉玩家的猜测，也让「继续到哪」这个行为本身可核对
+    const FString PlayLabel = Game.IsValid()
+        ? FString::Printf(TEXT("继续游戏（第 %d 关）"), Game->GetContinueLevel())
+        : FString(TEXT("继续游戏"));
+    AddButton(Panel, PlayLabel, true)->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnPlay);
     AddButton(Panel, TEXT("选择关卡"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnLevels);
     AddButton(Panel, TEXT("设置"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnSettings);
     AddButton(Panel, TEXT("退出游戏"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnQuit);
@@ -229,19 +233,37 @@ void UXiaomaHUDWidget::BuildGameHUD(UCanvasPanel* Root)
     UVerticalBox* Panel = MakePanel(Root, FVector2D(22.f, 24.f), FVector2D(250.f, 520.f),
         FVector2D::ZeroVector, FVector2D::ZeroVector);
     AddText(Panel, FString::Printf(TEXT("第 %02d 关"), Game->GetLevelNumber()), 28, Green);
-    AddText(Panel, FString::Printf(TEXT("生命 %d/%d  ·  步数 %d/%d"),
-        Game->GetLives(), Game->GetMaxLives(), Game->GetStepCount(), Game->GetParSteps()), 16, Gold);
-    AddText(Panel, FString::Printf(TEXT("提示星 %d  ·  四叶草 %s"),
-        Game->GetHintTokens(), Game->HasClover() ? TEXT("有") : TEXT("无")), 16, Gold);
-    AddText(Panel, FString::Printf(TEXT("好感 %d  ·  连胜 %d"),
-        Game->GetAffection(), Game->GetWinStreak()), 15, Muted);
+    // 生命不带分母：各关初始生命不同（1~10 关 3、11 关起 2），吃苹果最高到 5，
+    // 原先恒写 "/5" 会让满血看起来像掉过血。
+    AddText(Panel, FString::Printf(TEXT("生命 %d  ·  步数 %d/%d"),
+        Game->GetLives(), Game->GetStepCount(), Game->GetParSteps()), 16, Gold);
+    // 宝箱数写在这里：三星的第三颗星就是「集齐本关宝箱」，目标得让玩家看得见。
+    // 第 1、2 关没有宝箱，写 "0/0" 会让人以为漏了一个，干脆显示成横杠。
+    const int32 ChestTotal = Game->GetChestCount();
+    const FString ChestText = ChestTotal > 0
+        ? FString::Printf(TEXT("%d/%d"), Game->GetOpenedChestCount(), ChestTotal)
+        : FString(TEXT("—"));
+    AddText(Panel, FString::Printf(TEXT("提示星 %d  ·  宝箱 %s"),
+        Game->GetHintTokens(), *ChestText), 16, Gold);
+    AddText(Panel, FString::Printf(TEXT("四叶草 %s  ·  好感 %d  ·  连胜 %d"),
+        Game->HasClover() ? TEXT("有") : TEXT("无"), Game->GetAffection(), Game->GetWinStreak()), 15, Muted);
     const FString KInteract = Game->GetKeyForAction(EXiaomaBindAction::Interact).GetDisplayName().ToString();
     const FString KMark = Game->GetKeyForAction(EXiaomaBindAction::Mark).GetDisplayName().ToString();
     const FString KOverview = Game->GetKeyForAction(EXiaomaBindAction::Overview).GetDisplayName().ToString();
     const FString KHint = Game->GetKeyForAction(EXiaomaBindAction::Hint).GetDisplayName().ToString();
     const FString KUndo = Game->GetKeyForAction(EXiaomaBindAction::Undo).GetDisplayName().ToString();
 
-    AddButton(Panel, FString::Printf(TEXT("撤销  %s"), *KUndo))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnUndo);
+    UButton* UndoButton = AddButton(Panel, FString::Printf(TEXT("撤销  %s"), *KUndo));
+    UndoButton->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnUndo);
+    if (!Game->CanUndo())
+    {
+        // 历史为空时按钮点了也没反应，干脆置灰并把字压暗，别让玩家以为按键坏了
+        UndoButton->SetIsEnabled(false);
+        if (UTextBlock* UndoLabel = Cast<UTextBlock>(UndoButton->GetChildAt(0)))
+        {
+            UndoLabel->SetColorAndOpacity(FSlateColor(Muted));
+        }
+    }
     AddButton(Panel, TEXT("重开  R"))->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnRestart);
     AddButton(Panel, FString::Printf(TEXT("提示星 (%d)  %s"), Game->GetHintTokens(), *KHint))
         ->OnClicked.AddDynamic(this, &UXiaomaHUDWidget::OnHint);

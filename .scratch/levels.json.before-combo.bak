@@ -1,0 +1,3148 @@
+{
+  "formatVersion": 4,
+  "size": 6,
+  "colours": 6,
+  "levels": [
+    {
+      "id": 1,
+      "regions": [
+        [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          2,
+          2,
+          2,
+          2,
+          4
+        ],
+        [
+          3,
+          3,
+          2,
+          4,
+          2,
+          4
+        ],
+        [
+          3,
+          3,
+          2,
+          4,
+          4,
+          4
+        ],
+        [
+          3,
+          5,
+          2,
+          4,
+          5,
+          4
+        ],
+        [
+          3,
+          5,
+          5,
+          5,
+          5,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        3,
+        0,
+        4,
+        1,
+        5,
+        2
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        4,
+        8,
+        6,
+        9,
+        6
+      ],
+      "searchNodes": 131,
+      "logicScore": 5,
+      "logicOverlapSteps": 1,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 24,
+        "lives": 3,
+        "items": [],
+        "chests": []
+      }
+    },
+    {
+      "id": 2,
+      "regions": [
+        [
+          3,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          3,
+          1,
+          2,
+          2,
+          2
+        ],
+        [
+          5,
+          3,
+          3,
+          2,
+          2,
+          4
+        ],
+        [
+          5,
+          3,
+          3,
+          4,
+          4,
+          4
+        ],
+        [
+          5,
+          5,
+          4,
+          4,
+          4,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        5,
+        2,
+        4,
+        1,
+        3,
+        0
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        3,
+        5,
+        7,
+        9,
+        9
+      ],
+      "searchNodes": 148,
+      "logicScore": 5,
+      "logicOverlapSteps": 1,
+      "adventure": {
+        "start": [
+          5,
+          5
+        ],
+        "par": 25,
+        "lives": 3,
+        "items": [],
+        "chests": []
+      }
+    },
+    {
+      "id": 3,
+      "regions": [
+        [
+          0,
+          1,
+          2,
+          2,
+          2,
+          2
+        ],
+        [
+          0,
+          1,
+          1,
+          2,
+          2,
+          2
+        ],
+        [
+          0,
+          3,
+          5,
+          5,
+          2,
+          4
+        ],
+        [
+          3,
+          3,
+          5,
+          4,
+          4,
+          4
+        ],
+        [
+          3,
+          5,
+          5,
+          4,
+          4,
+          4
+        ],
+        [
+          3,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        0,
+        2,
+        4,
+        1,
+        5,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        3,
+        8,
+        5,
+        9,
+        8
+      ],
+      "searchNodes": 151,
+      "logicScore": 9,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 3,
+        "items": [],
+        "chests": [
+          {
+            "cell": [
+              0,
+              1
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          3,
+          3,
+          3
+        ],
+        [
+          0,
+          0,
+          3,
+          3,
+          1,
+          1
+        ],
+        [
+          0,
+          2,
+          2,
+          3,
+          3,
+          1
+        ],
+        [
+          0,
+          2,
+          2,
+          3,
+          1,
+          1
+        ],
+        [
+          2,
+          2,
+          1,
+          1,
+          1,
+          4
+        ],
+        [
+          2,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        0,
+        4,
+        1,
+        3,
+        5,
+        2
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        7,
+        8,
+        7,
+        8,
+        3,
+        3
+      ],
+      "searchNodes": 75,
+      "logicScore": 10,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 3,
+        "items": [],
+        "chests": [
+          {
+            "cell": [
+              0,
+              1
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "regions": [
+        [
+          2,
+          2,
+          2,
+          2,
+          1,
+          0
+        ],
+        [
+          2,
+          2,
+          2,
+          1,
+          1,
+          0
+        ],
+        [
+          2,
+          2,
+          4,
+          5,
+          1,
+          0
+        ],
+        [
+          4,
+          4,
+          4,
+          5,
+          3,
+          3
+        ],
+        [
+          4,
+          4,
+          4,
+          5,
+          5,
+          3
+        ],
+        [
+          4,
+          5,
+          5,
+          5,
+          5,
+          3
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        5,
+        3,
+        1,
+        4,
+        0,
+        2
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        4,
+        9,
+        4,
+        8,
+        8
+      ],
+      "searchNodes": 117,
+      "logicScore": 10,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 24,
+        "lives": 3,
+        "items": [],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          2,
+          2,
+          1,
+          1
+        ],
+        [
+          3,
+          0,
+          2,
+          2,
+          2,
+          1
+        ],
+        [
+          3,
+          3,
+          3,
+          3,
+          2,
+          2
+        ],
+        [
+          3,
+          3,
+          3,
+          2,
+          2,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        1,
+        4,
+        2,
+        0,
+        5,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        8,
+        4,
+        9,
+        8,
+        3,
+        4
+      ],
+      "searchNodes": 78,
+      "logicScore": 11,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 29,
+        "lives": 3,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              2
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            4,
+            3
+          ],
+          [
+            5,
+            4
+          ]
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "runes",
+              "order": [
+                [
+                  1,
+                  0
+                ],
+                [
+                  1,
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "regions": [
+        [
+          1,
+          1,
+          1,
+          1,
+          0,
+          0
+        ],
+        [
+          2,
+          2,
+          1,
+          1,
+          3,
+          0
+        ],
+        [
+          2,
+          2,
+          2,
+          3,
+          3,
+          0
+        ],
+        [
+          2,
+          3,
+          3,
+          3,
+          3,
+          0
+        ],
+        [
+          2,
+          2,
+          2,
+          3,
+          3,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          4,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        4,
+        2,
+        0,
+        3,
+        5,
+        1
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        5,
+        6,
+        9,
+        9,
+        4,
+        3
+      ],
+      "searchNodes": 98,
+      "logicScore": 11,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 29,
+        "lives": 3,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            3
+          ]
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "runes",
+              "order": [
+                [
+                  1,
+                  0
+                ],
+                [
+                  0,
+                  3
+                ],
+                [
+                  1,
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          2,
+          1,
+          1
+        ],
+        [
+          2,
+          2,
+          2,
+          2,
+          1,
+          3
+        ],
+        [
+          4,
+          2,
+          4,
+          2,
+          3,
+          3
+        ],
+        [
+          4,
+          4,
+          4,
+          3,
+          3,
+          5
+        ],
+        [
+          4,
+          4,
+          5,
+          3,
+          3,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        4,
+        1,
+        3,
+        0,
+        5
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        3,
+        7,
+        7,
+        7,
+        9
+      ],
+      "searchNodes": 127,
+      "logicScore": 13,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 30,
+        "lives": 3,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            0,
+            3
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "runes",
+              "order": [
+                [
+                  2,
+                  0
+                ],
+                [
+                  1,
+                  0
+                ],
+                [
+                  2,
+                  2
+                ],
+                [
+                  1,
+                  3
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          2,
+          2,
+          0,
+          2,
+          0,
+          1
+        ],
+        [
+          2,
+          2,
+          2,
+          2,
+          0,
+          1
+        ],
+        [
+          2,
+          2,
+          4,
+          4,
+          3,
+          3
+        ],
+        [
+          5,
+          5,
+          4,
+          4,
+          4,
+          3
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        3,
+        5,
+        1,
+        4,
+        2,
+        0
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        8,
+        3,
+        9,
+        3,
+        7,
+        6
+      ],
+      "searchNodes": 96,
+      "logicScore": 13,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          5
+        ],
+        "par": 30,
+        "lives": 3,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            0,
+            4
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            5
+          ]
+        ],
+        "chests": [
+          {
+            "cell": [
+              2,
+              2
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "stele",
+              "clue": {
+                "text": "宝藏埋在粉色草皮上，从上数第三条横带。",
+                "cell": [
+                  3,
+                  0
+                ]
+              },
+              "answer": [
+                2,
+                2
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          3,
+          3,
+          3
+        ],
+        [
+          0,
+          2,
+          0,
+          1,
+          3,
+          3
+        ],
+        [
+          0,
+          2,
+          2,
+          1,
+          1,
+          3
+        ],
+        [
+          4,
+          4,
+          4,
+          5,
+          5,
+          3
+        ],
+        [
+          4,
+          4,
+          4,
+          4,
+          5,
+          5
+        ],
+        [
+          4,
+          4,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        0,
+        3,
+        1,
+        5,
+        2,
+        4
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        6,
+        3,
+        3,
+        7,
+        9,
+        8
+      ],
+      "searchNodes": 125,
+      "logicScore": 13,
+      "logicOverlapSteps": 2,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 30,
+        "lives": 3,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              2
+            ]
+          }
+        ],
+        "obstacles": [
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            5,
+            1
+          ]
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              1
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "runes",
+              "order": [
+                [
+                  1,
+                  1
+                ],
+                [
+                  1,
+                  0
+                ],
+                [
+                  0,
+                  3
+                ]
+              ]
+            }
+          },
+          {
+            "cell": [
+              3,
+              2
+            ],
+            "reward": "apple",
+            "puzzle": {
+              "type": "stele",
+              "clue": {
+                "text": "宝藏埋在黄色草皮上，从上数第四条横带。",
+                "cell": [
+                  2,
+                  3
+                ]
+              },
+              "answer": [
+                3,
+                2
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          2,
+          2,
+          0,
+          0,
+          1,
+          1
+        ],
+        [
+          2,
+          0,
+          0,
+          5,
+          1,
+          3
+        ],
+        [
+          2,
+          2,
+          2,
+          5,
+          5,
+          3
+        ],
+        [
+          4,
+          4,
+          2,
+          2,
+          5,
+          3
+        ],
+        [
+          4,
+          5,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        4,
+        0,
+        5,
+        1,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        9,
+        4,
+        8,
+        3,
+        3,
+        9
+      ],
+      "searchNodes": 88,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "patrols": [
+          {
+            "path": [
+              [
+                5,
+                2
+              ],
+              [
+                5,
+                3
+              ],
+              [
+                5,
+                4
+              ],
+              [
+                5,
+                5
+              ]
+            ],
+            "speed": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "regions": [
+        [
+          2,
+          2,
+          0,
+          0,
+          1,
+          1
+        ],
+        [
+          2,
+          2,
+          2,
+          0,
+          1,
+          1
+        ],
+        [
+          2,
+          3,
+          3,
+          1,
+          1,
+          1
+        ],
+        [
+          2,
+          3,
+          3,
+          3,
+          3,
+          1
+        ],
+        [
+          4,
+          4,
+          5,
+          5,
+          3,
+          1
+        ],
+        [
+          4,
+          4,
+          4,
+          5,
+          3,
+          3
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        5,
+        0,
+        4,
+        1,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        9,
+        7,
+        9,
+        5,
+        3
+      ],
+      "searchNodes": 93,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "patrols": [
+          {
+            "path": [
+              [
+                3,
+                0
+              ],
+              [
+                3,
+                1
+              ],
+              [
+                3,
+                2
+              ],
+              [
+                3,
+                3
+              ],
+              [
+                3,
+                4
+              ],
+              [
+                3,
+                5
+              ]
+            ],
+            "speed": 1.6
+          }
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "regions": [
+        [
+          1,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          1,
+          1,
+          0,
+          0,
+          2
+        ],
+        [
+          1,
+          3,
+          0,
+          0,
+          0,
+          2
+        ],
+        [
+          1,
+          3,
+          4,
+          4,
+          4,
+          2
+        ],
+        [
+          5,
+          3,
+          4,
+          4,
+          4,
+          2
+        ],
+        [
+          5,
+          5,
+          4,
+          4,
+          2,
+          2
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        4,
+        2,
+        5,
+        1,
+        3,
+        0
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        9,
+        7,
+        6,
+        3,
+        8,
+        3
+      ],
+      "searchNodes": 102,
+      "adventure": {
+        "start": [
+          5,
+          5
+        ],
+        "par": 25,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "push",
+              "plate": [
+                0,
+                3
+              ]
+            }
+          }
+        ],
+        "patrols": [
+          {
+            "path": [
+              [
+                4,
+                0
+              ],
+              [
+                4,
+                1
+              ],
+              [
+                4,
+                2
+              ],
+              [
+                4,
+                3
+              ],
+              [
+                4,
+                4
+              ],
+              [
+                4,
+                5
+              ]
+            ],
+            "speed": 1.5
+          }
+        ],
+        "boxes": [
+          {
+            "cell": [
+              2,
+              3
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "regions": [
+        [
+          1,
+          1,
+          0,
+          2,
+          2,
+          2
+        ],
+        [
+          1,
+          0,
+          0,
+          2,
+          2,
+          3
+        ],
+        [
+          4,
+          2,
+          2,
+          2,
+          3,
+          3
+        ],
+        [
+          4,
+          2,
+          4,
+          3,
+          3,
+          3
+        ],
+        [
+          4,
+          4,
+          4,
+          3,
+          5,
+          3
+        ],
+        [
+          4,
+          4,
+          5,
+          5,
+          5,
+          3
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        0,
+        3,
+        5,
+        1,
+        4
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        3,
+        9,
+        9,
+        8,
+        4
+      ],
+      "searchNodes": 106,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 24,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "patrols": [
+          {
+            "path": [
+              [
+                2,
+                0
+              ],
+              [
+                2,
+                1
+              ],
+              [
+                2,
+                2
+              ],
+              [
+                2,
+                3
+              ],
+              [
+                2,
+                4
+              ],
+              [
+                2,
+                5
+              ]
+            ],
+            "speed": 1.5
+          }
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "regions": [
+        [
+          1,
+          2,
+          2,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          1,
+          2,
+          2,
+          2,
+          0
+        ],
+        [
+          1,
+          3,
+          3,
+          2,
+          5,
+          0
+        ],
+        [
+          1,
+          3,
+          2,
+          2,
+          5,
+          4
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          5,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        4,
+        0,
+        3,
+        1,
+        5,
+        2
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        5,
+        9,
+        8,
+        3,
+        3,
+        8
+      ],
+      "searchNodes": 110,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 26,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "push",
+              "plate": [
+                4,
+                0
+              ]
+            }
+          }
+        ],
+        "patrols": [
+          {
+            "path": [
+              [
+                5,
+                3
+              ],
+              [
+                5,
+                4
+              ],
+              [
+                5,
+                5
+              ]
+            ],
+            "speed": 1.2
+          },
+          {
+            "path": [
+              [
+                1,
+                2
+              ],
+              [
+                2,
+                2
+              ],
+              [
+                3,
+                2
+              ]
+            ],
+            "speed": 1.4
+          }
+        ],
+        "boxes": [
+          {
+            "cell": [
+              4,
+              3
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          0,
+          2,
+          2
+        ],
+        [
+          3,
+          3,
+          0,
+          0,
+          2,
+          1
+        ],
+        [
+          3,
+          3,
+          2,
+          2,
+          2,
+          1
+        ],
+        [
+          3,
+          4,
+          4,
+          2,
+          1,
+          1
+        ],
+        [
+          3,
+          3,
+          4,
+          4,
+          4,
+          4
+        ],
+        [
+          4,
+          4,
+          4,
+          5,
+          5,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        1,
+        5,
+        3,
+        0,
+        2,
+        4
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        6,
+        4,
+        7,
+        7,
+        9,
+        3
+      ],
+      "searchNodes": 112,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 26,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "ice": [
+          [
+            1,
+            4
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          2,
+          2,
+          2,
+          0,
+          1,
+          1
+        ],
+        [
+          2,
+          0,
+          0,
+          0,
+          3,
+          3
+        ],
+        [
+          2,
+          4,
+          4,
+          4,
+          5,
+          3
+        ],
+        [
+          2,
+          4,
+          4,
+          4,
+          5,
+          5
+        ],
+        [
+          2,
+          2,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        4,
+        0,
+        5,
+        1,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        9,
+        3,
+        8,
+        3,
+        6,
+        7
+      ],
+      "searchNodes": 116,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 28,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "ice": [
+          [
+            3,
+            2
+          ],
+          [
+            3,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "regions": [
+        [
+          2,
+          2,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          2,
+          1,
+          1,
+          0,
+          5,
+          0
+        ],
+        [
+          2,
+          3,
+          0,
+          0,
+          5,
+          5
+        ],
+        [
+          3,
+          3,
+          3,
+          3,
+          3,
+          5
+        ],
+        [
+          3,
+          4,
+          4,
+          5,
+          5,
+          5
+        ],
+        [
+          3,
+          3,
+          4,
+          4,
+          4,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        4,
+        2,
+        0,
+        3,
+        1,
+        5
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        7,
+        3,
+        4,
+        9,
+        5,
+        8
+      ],
+      "searchNodes": 119,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              3
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "obstacles": [
+          [
+            5,
+            4
+          ]
+        ],
+        "bridges": [
+          [
+            4,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "regions": [
+        [
+          2,
+          0,
+          0,
+          3,
+          1,
+          1
+        ],
+        [
+          2,
+          0,
+          0,
+          3,
+          1,
+          1
+        ],
+        [
+          2,
+          2,
+          0,
+          3,
+          1,
+          1
+        ],
+        [
+          2,
+          2,
+          2,
+          3,
+          3,
+          1
+        ],
+        [
+          4,
+          5,
+          5,
+          5,
+          3,
+          1
+        ],
+        [
+          4,
+          4,
+          5,
+          5,
+          3,
+          1
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        5,
+        1,
+        4,
+        0,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        5,
+        9,
+        7,
+        7,
+        3,
+        5
+      ],
+      "searchNodes": 122,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "obstacles": [
+          [
+            2,
+            4
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            4,
+            3
+          ],
+          [
+            5,
+            5
+          ]
+        ],
+        "bridges": [
+          [
+            3,
+            3
+          ],
+          [
+            5,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "regions": [
+        [
+          2,
+          2,
+          0,
+          1,
+          3,
+          3
+        ],
+        [
+          2,
+          0,
+          0,
+          1,
+          1,
+          3
+        ],
+        [
+          2,
+          3,
+          3,
+          3,
+          3,
+          3
+        ],
+        [
+          4,
+          4,
+          4,
+          3,
+          5,
+          5
+        ],
+        [
+          4,
+          4,
+          4,
+          4,
+          5,
+          5
+        ],
+        [
+          4,
+          5,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        2,
+        4,
+        0,
+        3,
+        1,
+        5
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        3,
+        4,
+        9,
+        8,
+        9
+      ],
+      "searchNodes": 133,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 30,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "obstacles": [
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            4,
+            0
+          ],
+          [
+            5,
+            4
+          ]
+        ],
+        "bridges": [
+          [
+            4,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "regions": [
+        [
+          1,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          2,
+          2
+        ],
+        [
+          1,
+          3,
+          3,
+          1,
+          2,
+          2
+        ],
+        [
+          3,
+          3,
+          3,
+          5,
+          5,
+          5
+        ],
+        [
+          3,
+          4,
+          4,
+          4,
+          4,
+          5
+        ],
+        [
+          3,
+          3,
+          3,
+          4,
+          4,
+          5
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        3,
+        1,
+        4,
+        0,
+        2,
+        5
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        9,
+        4,
+        9,
+        6,
+        5
+      ],
+      "searchNodes": 136,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 28,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ],
+        "gates": [
+          {
+            "region": 2,
+            "switch": [
+              3,
+              3
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "regions": [
+        [
+          2,
+          2,
+          2,
+          0,
+          0,
+          0
+        ],
+        [
+          2,
+          2,
+          1,
+          3,
+          3,
+          4
+        ],
+        [
+          2,
+          1,
+          1,
+          3,
+          4,
+          4
+        ],
+        [
+          2,
+          2,
+          5,
+          3,
+          3,
+          4
+        ],
+        [
+          5,
+          2,
+          5,
+          5,
+          5,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        4,
+        2,
+        0,
+        3,
+        5,
+        1
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        3,
+        3,
+        9,
+        5,
+        7,
+        9
+      ],
+      "searchNodes": 143,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 24,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              3
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "regions": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          4,
+          4,
+          2,
+          1,
+          1,
+          1
+        ],
+        [
+          4,
+          4,
+          2,
+          2,
+          3,
+          3
+        ],
+        [
+          5,
+          4,
+          4,
+          4,
+          4,
+          3
+        ],
+        [
+          5,
+          4,
+          5,
+          5,
+          5,
+          3
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          3,
+          3
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        0,
+        4,
+        2,
+        5,
+        1,
+        3
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        5,
+        4,
+        3,
+        6,
+        9,
+        9
+      ],
+      "searchNodes": 149,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 25,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              3
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              1
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "regions": [
+        [
+          1,
+          1,
+          1,
+          0,
+          0,
+          2
+        ],
+        [
+          1,
+          3,
+          3,
+          3,
+          0,
+          2
+        ],
+        [
+          3,
+          3,
+          3,
+          4,
+          0,
+          2
+        ],
+        [
+          5,
+          5,
+          3,
+          4,
+          0,
+          0
+        ],
+        [
+          5,
+          5,
+          5,
+          4,
+          4,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        3,
+        0,
+        5,
+        2,
+        4,
+        1
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        6,
+        4,
+        3,
+        7,
+        7,
+        9
+      ],
+      "searchNodes": 149,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 24,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              4
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "regions": [
+        [
+          1,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          1,
+          2,
+          2,
+          2,
+          0
+        ],
+        [
+          3,
+          1,
+          2,
+          2,
+          4,
+          4
+        ],
+        [
+          3,
+          2,
+          2,
+          4,
+          4,
+          4
+        ],
+        [
+          5,
+          5,
+          2,
+          5,
+          5,
+          4
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          4,
+          4
+        ]
+      ],
+      "givens": [],
+      "solution": [
+        4,
+        1,
+        3,
+        0,
+        5,
+        2
+      ],
+      "solutionsBeforeGivens": 1,
+      "regionSizes": [
+        5,
+        4,
+        8,
+        3,
+        8,
+        8
+      ],
+      "searchNodes": 167,
+      "adventure": {
+        "start": [
+          5,
+          0
+        ],
+        "par": 26,
+        "lives": 2,
+        "items": [
+          {
+            "type": "apple",
+            "cell": [
+              0,
+              1
+            ]
+          },
+          {
+            "type": "carrot",
+            "cell": [
+              0,
+              2
+            ]
+          },
+          {
+            "type": "clover",
+            "cell": [
+              0,
+              3
+            ]
+          }
+        ],
+        "chests": [
+          {
+            "cell": [
+              0,
+              0
+            ],
+            "reward": "hint",
+            "puzzle": {
+              "type": "rule",
+              "target": "row",
+              "index": 0
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

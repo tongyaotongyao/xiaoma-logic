@@ -31,6 +31,127 @@ EXiaomaItemType ParseItemType(const FString& Name)
     if (Name.Equals(TEXT("clover"), ESearchCase::IgnoreCase)) return EXiaomaItemType::Clover;
     return EXiaomaItemType::Hint;
 }
+
+/**
+ * 解析一段开箱谜题，`then` 递归解析成后续段（组合宝箱）。
+ * 上限 3 段：再多玩家记不住顺序，也说明这一关该拆了，超出的部分只打日志丢掉。
+ * 返回 1 表示确实写入了一段，方便调用方判断"这条宝箱到底有没有谜题"。
+ */
+int32 ParseChestStage(const TSharedPtr<FJsonObject>& Puzzle, TArray<FXiaomaChestStage>& OutStages, int32 LevelId)
+{
+    constexpr int32 MaxStages = 3;
+    if (!Puzzle.IsValid() || OutStages.Num() >= MaxStages)
+    {
+        return 0;
+    }
+
+    FXiaomaChestStage Stage;
+
+    FString PuzzleTypeStr;
+    Puzzle->TryGetStringField(TEXT("type"), PuzzleTypeStr);
+    if (PuzzleTypeStr.Equals(TEXT("runes"), ESearchCase::IgnoreCase))
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Runes;
+    }
+    else if (PuzzleTypeStr.Equals(TEXT("stele"), ESearchCase::IgnoreCase))
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Stele;
+    }
+    else if (PuzzleTypeStr.Equals(TEXT("push"), ESearchCase::IgnoreCase))
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Push;
+    }
+    else
+    {
+        Stage.PuzzleType = EXiaomaChestPuzzleType::Rule;
+    }
+
+    FString RuleTarget;
+    if (Puzzle->TryGetStringField(TEXT("target"), RuleTarget))
+    {
+        if (RuleTarget.Equals(TEXT("col"), ESearchCase::IgnoreCase)
+            || RuleTarget.Equals(TEXT("column"), ESearchCase::IgnoreCase))
+        {
+            Stage.RuleType = EXiaomaChestRuleType::Column;
+        }
+        else if (RuleTarget.Equals(TEXT("region"), ESearchCase::IgnoreCase))
+        {
+            Stage.RuleType = EXiaomaChestRuleType::Region;
+        }
+        else
+        {
+            Stage.RuleType = EXiaomaChestRuleType::Row;
+        }
+    }
+    int32 IndexVal = 0;
+    if (Puzzle->TryGetNumberField(TEXT("index"), IndexVal))
+    {
+        Stage.RuleIndex = FMath::Clamp(IndexVal, 0, FXiaomaPuzzle::Size - 1);
+    }
+
+    // 符文顺序
+    const TArray<TSharedPtr<FJsonValue>>* OrderArr = nullptr;
+    if (Puzzle->TryGetArrayField(TEXT("order"), OrderArr) && OrderArr)
+    {
+        for (const TSharedPtr<FJsonValue>& StepVal : *OrderArr)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* StepArr = nullptr;
+            FIntPoint Step;
+            if (StepVal->TryGetArray(StepArr) && StepArr && ParseIntPoint(*StepArr, Step))
+            {
+                Stage.RuneOrder.Add(Step);
+            }
+        }
+    }
+
+    // 石碑线索与埋藏格
+    const TSharedPtr<FJsonObject>* ClueObj = nullptr;
+    if (Puzzle->TryGetObjectField(TEXT("clue"), ClueObj) && ClueObj && (*ClueObj).IsValid())
+    {
+        (*ClueObj)->TryGetStringField(TEXT("text"), Stage.ClueText);
+        const TArray<TSharedPtr<FJsonValue>>* ClueCellArr = nullptr;
+        FIntPoint ClueCell;
+        if ((*ClueObj)->TryGetArrayField(TEXT("cell"), ClueCellArr) && ClueCellArr
+            && ParseIntPoint(*ClueCellArr, ClueCell))
+        {
+            Stage.SteleCell = ClueCell;
+        }
+    }
+    const TArray<TSharedPtr<FJsonValue>>* AnswerArr = nullptr;
+    FIntPoint AnswerCell;
+    if (Puzzle->TryGetArrayField(TEXT("answer"), AnswerArr) && AnswerArr
+        && ParseIntPoint(*AnswerArr, AnswerCell))
+    {
+        Stage.SteleAnswer = AnswerCell;
+    }
+
+    // 推箱压力板
+    const TArray<TSharedPtr<FJsonValue>>* PlateArr = nullptr;
+    FIntPoint PlateCell;
+    if (Puzzle->TryGetArrayField(TEXT("plate"), PlateArr) && PlateArr
+        && ParseIntPoint(*PlateArr, PlateCell))
+    {
+        Stage.PushPlate = PlateCell;
+    }
+
+    OutStages.Add(Stage);
+
+    // 组合宝箱：这一段做完才轮到 then 里的下一段
+    const TSharedPtr<FJsonObject>* ThenObj = nullptr;
+    if (Puzzle->TryGetObjectField(TEXT("then"), ThenObj) && ThenObj && (*ThenObj).IsValid())
+    {
+        if (OutStages.Num() >= MaxStages)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("Level %d: chest puzzle chains more than %d stages, extra stages ignored"), LevelId, MaxStages);
+        }
+        else
+        {
+            ParseChestStage(*ThenObj, OutStages, LevelId);
+        }
+    }
+    return 1;
+}
 }
 
 bool FXiaomaLevel::IsGiven(int32 Row, int32 Column) const
@@ -206,31 +327,166 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                         const TSharedPtr<FJsonObject>* PuzzleObj = nullptr;
                         if (ChestObj->TryGetObjectField(TEXT("puzzle"), PuzzleObj) && PuzzleObj && (*PuzzleObj).IsValid())
                         {
-                            FString RuleTarget;
-                            if ((*PuzzleObj)->TryGetStringField(TEXT("target"), RuleTarget))
-                            {
-                                if (RuleTarget.Equals(TEXT("col"), ESearchCase::IgnoreCase)
-                                    || RuleTarget.Equals(TEXT("column"), ESearchCase::IgnoreCase))
-                                {
-                                    Def.RuleType = EXiaomaChestRuleType::Column;
-                                }
-                                else if (RuleTarget.Equals(TEXT("region"), ESearchCase::IgnoreCase))
-                                {
-                                    Def.RuleType = EXiaomaChestRuleType::Region;
-                                }
-                                else
-                                {
-                                    Def.RuleType = EXiaomaChestRuleType::Row;
-                                }
-                            }
-                            int32 IndexVal = 0;
-                            if ((*PuzzleObj)->TryGetNumberField(TEXT("index"), IndexVal))
-                            {
-                                Def.RuleIndex = FMath::Clamp(IndexVal, 0, Size - 1);
-                            }
+                            // 顶层是第一段，then 里的依次是后续段
+                            ParseChestStage(*PuzzleObj, Def.Stages, Level.Id);
+                        }
+                        if (Def.Stages.Num() == 0)
+                        {
+                            // 没写谜题的宝箱按规则开箱兜底（行为与旧版一致），
+                            // 校验工具会把缺 puzzle 的宝箱报成错误。
+                            Def.Stages.Add(FXiaomaChestStage());
                         }
                         Level.Adventure.Chests.Add(Def);
                     }
+                }
+            }
+
+            // 静态障碍
+            const TArray<TSharedPtr<FJsonValue>>* ObstaclesArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("obstacles"), ObstaclesArr) && ObstaclesArr)
+            {
+                for (const TSharedPtr<FJsonValue>& ObstacleVal : *ObstaclesArr)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* ObstacleCellArr = nullptr;
+                    FIntPoint ObstacleCell;
+                    if (ObstacleVal->TryGetArray(ObstacleCellArr) && ObstacleCellArr
+                        && ParseIntPoint(*ObstacleCellArr, ObstacleCell))
+                    {
+                        Level.Adventure.Obstacles.Add(ObstacleCell);
+                    }
+                }
+            }
+
+            // 推箱木箱
+            const TArray<TSharedPtr<FJsonValue>>* BoxesArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("boxes"), BoxesArr) && BoxesArr)
+            {
+                for (const TSharedPtr<FJsonValue>& BoxVal : *BoxesArr)
+                {
+                    const TSharedPtr<FJsonObject> BoxObj = BoxVal->AsObject();
+                    if (!BoxObj.IsValid()) continue;
+                    const TArray<TSharedPtr<FJsonValue>>* BoxCellArr = nullptr;
+                    FIntPoint BoxCell;
+                    if (BoxObj->TryGetArrayField(TEXT("cell"), BoxCellArr) && BoxCellArr
+                        && ParseIntPoint(*BoxCellArr, BoxCell))
+                    {
+                        FXiaomaBoxDef Def;
+                        Def.Cell = BoxCell;
+                        Level.Adventure.Boxes.Add(Def);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: box has no valid cell, ignored"), Level.Id);
+                    }
+                }
+            }
+
+            // 巡逻捣蛋鬼
+            const TArray<TSharedPtr<FJsonValue>>* PatrolsArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("patrols"), PatrolsArr) && PatrolsArr)
+            {
+                for (const TSharedPtr<FJsonValue>& PatrolVal : *PatrolsArr)
+                {
+                    const TSharedPtr<FJsonObject> PatrolObj = PatrolVal->AsObject();
+                    if (!PatrolObj.IsValid()) continue;
+
+                    FXiaomaPatrolDef Def;
+                    const TArray<TSharedPtr<FJsonValue>>* PathArr = nullptr;
+                    if (PatrolObj->TryGetArrayField(TEXT("path"), PathArr) && PathArr)
+                    {
+                        for (const TSharedPtr<FJsonValue>& PathCellVal : *PathArr)
+                        {
+                            const TArray<TSharedPtr<FJsonValue>>* PathCellArr = nullptr;
+                            FIntPoint PathCell;
+                            if (PathCellVal->TryGetArray(PathCellArr) && PathCellArr
+                                && ParseIntPoint(*PathCellArr, PathCell))
+                            {
+                                Def.Path.Add(PathCell);
+                            }
+                        }
+                    }
+                    double SpeedValue = 0.0;
+                    if (PatrolObj->TryGetNumberField(TEXT("speed"), SpeedValue) && SpeedValue > 0.0)
+                    {
+                        Def.Speed = FMath::Clamp(static_cast<float>(SpeedValue), 0.2f, 8.f);
+                    }
+                    // 少于两个点走不出往返；坏数据只丢这一条，不连累整关
+                    if (Def.Path.Num() >= 2)
+                    {
+                        Level.Adventure.Patrols.Add(MoveTemp(Def));
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: patrol path needs at least 2 cells, ignored"), Level.Id);
+                    }
+                }
+            }
+            // 冰面：只影响主角能不能停下，不占格也不参与机关状态，所以不进 Mechanisms
+            const TArray<TSharedPtr<FJsonValue>>* IceArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("ice"), IceArr) && IceArr)
+            {
+                for (const TSharedPtr<FJsonValue>& IceVal : *IceArr)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* IceCellArr = nullptr;
+                    FIntPoint IceCell;
+                    if (IceVal->TryGetArray(IceCellArr) && IceCellArr
+                        && ParseIntPoint(*IceCellArr, IceCell))
+                    {
+                        if (!Level.Adventure.Ice.Contains(IceCell))
+                        {
+                            Level.Adventure.Ice.Add(IceCell);
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: ice cell out of range, ignored"), Level.Id);
+                    }
+                }
+            }
+            // 塌陷木桥：每座桥一个机关 actor，状态（完好/已塌）进存档与撤销快照
+            const TArray<TSharedPtr<FJsonValue>>* BridgeArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("bridges"), BridgeArr) && BridgeArr)
+            {
+                for (const TSharedPtr<FJsonValue>& BridgeVal : *BridgeArr)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* BridgeCellArr = nullptr;
+                    FIntPoint BridgeCell;
+                    if (BridgeVal->TryGetArray(BridgeCellArr) && BridgeCellArr
+                        && ParseIntPoint(*BridgeCellArr, BridgeCell))
+                    {
+                        if (!Level.Adventure.Bridges.Contains(BridgeCell))
+                        {
+                            Level.Adventure.Bridges.Add(BridgeCell);
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: bridge cell out of range, ignored"), Level.Id);
+                    }
+                }
+            }
+            // 色区围栏：每道围栏一个机关 actor，开/关状态进存档与撤销快照
+            const TArray<TSharedPtr<FJsonValue>>* GateArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("gates"), GateArr) && GateArr)
+            {
+                for (const TSharedPtr<FJsonValue>& GateVal : *GateArr)
+                {
+                    const TSharedPtr<FJsonObject> GateObj = GateVal->AsObject();
+                    if (!GateObj.IsValid()) continue;
+                    const TArray<TSharedPtr<FJsonValue>>* SwitchArr = nullptr;
+                    FXiaomaGateDef Def;
+                    int32 RegionValue = -1;
+                    // 区域越界或开关格不合法都只丢这一条，不连累整关
+                    if (!GateObj->TryGetNumberField(TEXT("region"), RegionValue)
+                        || RegionValue < 0 || RegionValue >= 6
+                        || !GateObj->TryGetArrayField(TEXT("switch"), SwitchArr) || !SwitchArr
+                        || !ParseIntPoint(*SwitchArr, Def.SwitchCell))
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: gate needs region 0-5 and a switch cell, ignored"), Level.Id);
+                        continue;
+                    }
+                    Def.Region = RegionValue;
+                    Level.Adventure.Gates.Add(Def);
                 }
             }
         }
@@ -376,4 +632,108 @@ FIntPoint FXiaomaPuzzle::FindHint(const FXiaomaLevel& Level, const TArray<uint8>
         }
     }
     return FIntPoint(-1, -1);
+}
+
+int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
+{
+    // FNV-1a，只求稳定、不要求分布性质
+    uint32 Hash = 2166136261u;
+    auto Mix = [&Hash](int32 Value)
+    {
+        Hash ^= static_cast<uint32>(Value);
+        Hash *= 16777619u;
+    };
+
+    Mix(Level.Id);
+
+    Mix(Level.Adventure.Obstacles.Num());
+    for (const FIntPoint& Cell : Level.Adventure.Obstacles)
+    {
+        Mix(Cell.X);
+        Mix(Cell.Y);
+    }
+
+    Mix(Level.Adventure.Chests.Num());
+    for (const FXiaomaChestDef& Chest : Level.Adventure.Chests)
+    {
+        Mix(Chest.Cell.X);
+        Mix(Chest.Cell.Y);
+        Mix(static_cast<int32>(Chest.Reward));
+        // 段数与每段全部字段都算：改链式顺序等于改了开箱方式，旧续局必须失效
+        Mix(Chest.Stages.Num());
+        for (const FXiaomaChestStage& Stage : Chest.Stages)
+        {
+            Mix(static_cast<int32>(Stage.PuzzleType));
+            Mix(static_cast<int32>(Stage.RuleType));
+            Mix(Stage.RuleIndex);
+            Mix(Stage.RuneOrder.Num());
+            for (const FIntPoint& Rune : Stage.RuneOrder)
+            {
+                Mix(Rune.X);
+                Mix(Rune.Y);
+            }
+            Mix(Stage.SteleCell.X);
+            Mix(Stage.SteleCell.Y);
+            Mix(Stage.SteleAnswer.X);
+            Mix(Stage.SteleAnswer.Y);
+            Mix(Stage.PushPlate.X);
+            Mix(Stage.PushPlate.Y);
+        }
+    }
+
+    Mix(Level.Adventure.Items.Num());
+    for (const FXiaomaItemDef& Item : Level.Adventure.Items)
+    {
+        Mix(static_cast<int32>(Item.Type));
+        Mix(Item.Cell.X);
+        Mix(Item.Cell.Y);
+    }
+
+    // 巡逻也会被按索引写进撤销快照，路线或速度一改就必须让旧续局失效
+    Mix(Level.Adventure.Patrols.Num());
+    for (const FXiaomaPatrolDef& Patrol : Level.Adventure.Patrols)
+    {
+        Mix(Patrol.Path.Num());
+        for (const FIntPoint& Cell : Patrol.Path)
+        {
+            Mix(Cell.X);
+            Mix(Cell.Y);
+        }
+        Mix(FMath::RoundToInt(Patrol.Speed * 100.f));
+    }
+
+    // 木箱的初始格同样会被按索引写进撤销快照，改位置就得让旧续局失效
+    Mix(Level.Adventure.Boxes.Num());
+    for (const FXiaomaBoxDef& Box : Level.Adventure.Boxes)
+    {
+        Mix(Box.Cell.X);
+        Mix(Box.Cell.Y);
+    }
+
+    // 冰面本身没有状态，但它决定了主角能停在哪：地形一改，续局里那个位置可能已经站不住了
+    Mix(Level.Adventure.Ice.Num());
+    for (const FIntPoint& IceCell : Level.Adventure.Ice)
+    {
+        Mix(IceCell.X);
+        Mix(IceCell.Y);
+    }
+
+    // 木桥按 Mechanisms 下标写进存档，格数或顺序一变，已有续局的桥状态就错位了
+    Mix(Level.Adventure.Bridges.Num());
+    for (const FIntPoint& BridgeCell : Level.Adventure.Bridges)
+    {
+        Mix(BridgeCell.X);
+        Mix(BridgeCell.Y);
+    }
+
+    // 围栏同样按 Mechanisms 下标写进存档；区域或开关格一改，旧续局的开门状态就错位了
+    Mix(Level.Adventure.Gates.Num());
+    for (const FXiaomaGateDef& Gate : Level.Adventure.Gates)
+    {
+        Mix(Gate.Region);
+        Mix(Gate.SwitchCell.X);
+        Mix(Gate.SwitchCell.Y);
+    }
+
+    return static_cast<int32>(Hash & 0x7fffffffu);
 }
