@@ -104,10 +104,14 @@ void AXiaomaPickup::SetCollected(bool bInCollected)
 
 void AXiaomaPickup::OnHerdsmanEnterCell(FIntPoint Cell)
 {
-    if (!bCollected && Cell == Def.Cell)
+    if (!bCollected && !bCollecting && Cell == Def.Cell)
     {
-        SetCollected(true);
+        // 先通知、后置位：GameMode 在回调里拍撤销快照，快照必须记成“还没捡”。
+        // 反过来做的话，撤销会把奖励退回去、道具却已经消失，等于白吃一件道具。
+        bCollecting = true;
         OnCollected.ExecuteIfBound(Def.Type, Def.Cell);
+        bCollecting = false;
+        SetCollected(true);
     }
 }
 

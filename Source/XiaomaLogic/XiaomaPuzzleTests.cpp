@@ -113,6 +113,18 @@ bool FXiaomaPuzzleTest::RunTest(const FString& Parameters)
     Modified.Adventure.Obstacles.Add(FIntPoint(5, 5));
     TestNotEqual(TEXT("Fingerprint tracks obstacles"), FXiaomaPuzzle::AdventureFingerprint(Modified), Fingerprint6);
 
+    // 冰面：第 16 关起才配，且会进指纹（地形改了旧续局就不能再用）
+    for (int32 Index = 0; Index < 15; ++Index)
+    {
+        TestTrue(FString::Printf(TEXT("Level %d has no ice"), Levels[Index].Id),
+            Levels[Index].Adventure.Ice.IsEmpty());
+    }
+    TestEqual(TEXT("Level 16 ice cells parsed"), Levels[15].Adventure.Ice.Num(), 4);
+    TestEqual(TEXT("Level 17 ice cells parsed"), Levels[16].Adventure.Ice.Num(), 6);
+    FXiaomaLevel Iced = Levels[5];
+    Iced.Adventure.Ice.Add(FIntPoint(5, 5));
+    TestNotEqual(TEXT("Fingerprint tracks ice"), FXiaomaPuzzle::AdventureFingerprint(Iced), Fingerprint6);
+
     // 续局判定：关卡、格数、生命、布局指纹任一条不对就不续
     UXiaomaSaveGame* Round = NewObject<UXiaomaSaveGame>();
     Round->MigrateLevelRevision();

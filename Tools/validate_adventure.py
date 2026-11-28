@@ -4,8 +4,8 @@
 
 1. 基础谜题不变量：六色区形状、每色 3~9 格且四向连通、空开局、720 种列排列穷举下唯一解。
 2. 冒险层：起点、生命、道具、宝箱的位置与类型；障碍类机关是否落在正解格上；
-   从起点出发的可达性（广度优先搜索）；以及按“走遍 6 个正解格的最短步数 × 1.3 向上取整”
-   算出的标准步数 par。
+   从起点出发的可达性（广度优先搜索，冰面按"踩上去就滑"的语义展开）；
+   以及按“走遍 6 个正解格的最短步数 × 1.3 向上取整”算出的标准步数 par。
 
 用法：
     python Tools/validate_adventure.py                 只报告，不改文件
@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import heapq
 import itertools
 import json
 import math
@@ -36,7 +37,9 @@ LEVELS_PATH = ROOT / "Content" / "Levels" / "levels.json"
 ITEM_TYPES = ("hint", "apple", "carrot", "clover")
 ITEM_SYMBOL = {"hint": "h", "apple": "a", "carrot": "c", "clover": "f"}
 PUZZLE_TYPES = ("rule", "runes", "stele", "push")
-UNIMPLEMENTED_KEYS = ("ice", "bridges", "gates", "steles")
+UNIMPLEMENTED_KEYS = ("bridges", "gates", "steles")
+DIRECTIONS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+INF = float("inf")
 
 
 def load_levels(path=LEVELS_PATH):
@@ -261,6 +264,30 @@ def check_adventure(level, errors, warnings):
         if cell in obstacle_set:
             errors.append("宝箱与障碍同格 (%d,%d)" % cell)
 
+    # 冰面：能走进去，但踩上就站不住，所以不能放需要"停下来操作"的东西
+    ice = parse_cell_list(adv.get("ice"), "adventure.ice", errors)
+    if len(set(ice)) != len(ice):
+        errors.append("adventure.ice 有重复格子")
+    ice_set = set(ice)
+    out["ice"] = ice
+    if ice_set & obstacle_set:
+        errors.append("冰面与障碍同格：%s"
+                      % "、".join("(%d,%d)" % cell for cell in sorted(ice_set & obstacle_set)))
+    for kind, cell in out["items"]:
+        if cell in ice_set:
+            errors.append("道具 %s 落在冰面 (%d,%d) 上，主角滑过去就捡不到"
+                          % (kind, cell[0], cell[1]))
+    for cell in out["chests_cells"]:
+        if cell in ice_set:
+            errors.append("宝箱落在冰面 (%d,%d) 上，主角停不下来打不开" % cell)
+    if ice_set and out["start"] in ice_set:
+        warnings.append("主角起点在冰面上：一进关按方向就会直接滑出去")
+    if ice_set:
+        # 孤立的单格冰没有意义：滑进去马上就滑出来，等于没有
+        for cell in sorted(ice_set):
+            if not any(other in ice_set for other in neighbours(*cell)):
+                warnings.append("冰面 (%d,%d) 周围没有别的冰格，单格冰起不到滑行作用" % cell)
+
     # 巡逻捣蛋鬼：路线逐格相邻，停留端点不能压在正解格上（策划案 4 节）
     patrols = adv.get("patrols") or []
     if not isinstance(patrols, list):
@@ -320,11 +347,15 @@ def check_adventure(level, errors, warnings):
             errors.append("%s 的初始格 %r 与宝箱同格" % (where, cell))
         if cell == out["start"]:
             errors.append("%s 的初始格 %r 就是主角起点，一进关就被卡住" % (where, cell))
+        if cell in ice_set:
+            errors.append("%s 的初始格 %r 在冰面上，冰上推不动箱子" % (where, cell))
         for item_kind, item_cell in out["items"]:
             if cell == item_cell:
                 errors.append("%s 的初始格 %r 与道具 %s 同格" % (where, cell, item_kind))
         boxes.append(cell)
     out["boxes"] = boxes
+    if boxes and ice_set:
+        errors.append("冰面与木箱不要放在同一关：滑行时主角不推箱，两套规则会互相打架")
 
     plates = []
     for index, chest in enumerate(chests):
@@ -343,6 +374,8 @@ def check_adventure(level, errors, warnings):
             errors.append("%s 与障碍同格 %r" % (where, plate))
         if plate in out["chests_cells"]:
             errors.append("%s 与宝箱同格 %r" % (where, plate))
+        if plate in ice_set:
+            errors.append("%s 在冰面上 %r，木箱压上去也停不住" % (where, plate))
         for item_kind, item_cell in out["items"]:
             if plate == item_cell:
                 errors.append("%s 与道具 %s 同格 %r，木箱压上去就拿不到了"
@@ -402,6 +435,8 @@ def check_adventure(level, errors, warnings):
         if cell in seen_puzzle:
             errors.append("%s 与另一处符文/石碑同格 (%d,%d)" % (where, cell[0], cell[1]))
         seen_puzzle.add(cell)
+    if ice_set and puzzle_cells:
+        errors.append("冰面关暂不支持符文/石碑宝箱：滑行会一路滑过符文，踩不准")
     out["puzzle_cells"] = puzzle_cells
     out["chests_raw"] = chests
 
@@ -474,7 +509,33 @@ def walkable_cells(obstacles):
     return {(r, c) for r in range(SIZE) for c in range(SIZE)} - blocked
 
 
-def reachable(start, walkable):
+def slide_step(cell, direction, walkable, ice=frozenset()):
+    """从 cell 沿 direction 走一步的真实落点，以及这一步跨过了几格。
+
+    普通地板走一格；一踩上冰面就停不下来，只能一路滑：
+    - 滑出冰面：落在冰后面第一块普通地板上（游戏里也是滑过去才停）；
+    - 撞上墙或障碍：停在最后一块冰上，那一格就成了"冰上落脚点"。
+    滑不动（前面直接被挡住）返回 None。
+    """
+    dr, dc = direction
+    nxt = (cell[0] + dr, cell[1] + dc)
+    if nxt not in walkable:
+        return None
+    if nxt not in ice:
+        return nxt, 1
+    current = nxt
+    cost = 1
+    while True:
+        ahead = (current[0] + dr, current[1] + dc)
+        if ahead not in walkable:
+            return current, cost
+        if ahead not in ice:
+            return ahead, cost + 1
+        current = ahead
+        cost += 1
+
+
+def reachable(start, walkable, ice=frozenset()):
     start = as_cell(start)
     if start is None or start not in walkable:
         return set()
@@ -482,17 +543,22 @@ def reachable(start, walkable):
     todo = deque([start])
     while todo:
         row, col = todo.popleft()
-        for other in neighbours(row, col):
-            if other in walkable and other not in seen:
+        for direction in DIRECTIONS:
+            step = slide_step((row, col), direction, walkable, ice)
+            if step is None:
+                continue
+            other = step[0]
+            if other not in seen:
                 seen.add(other)
                 todo.append(other)
     return seen
 
 
-def min_steps(start, targets, walkable):
+def min_steps(start, targets, walkable, ice=frozenset()):
     """从起点走遍全部 targets 的最少“进入新格子”次数。
 
-    状态 = (当前格, 已踩过的目标集合)，每走一格算一步，广度优先保证最短。
+    状态 = (当前格, 已踩过的目标集合)。没有冰时每步都是 1 格，退化成普通广度优先；
+    有冰时一步可能滑出好几格，代价等于跨过的格数，所以用 Dijkstra 按代价展开。
     """
     start = as_cell(start)
     if start is None or start not in walkable:
@@ -507,21 +573,31 @@ def min_steps(start, targets, walkable):
     start_mask = 1 << index_of[start] if start in index_of else 0
     if start_mask == full:
         return 0
-    seen = {(start, start_mask)}
-    todo = deque([(start, start_mask, 0)])
-    while todo:
-        cell, mask, steps = todo.popleft()
-        for other in neighbours(*cell):
-            if other not in walkable:
+
+    best = {(start, start_mask): 0}
+    heap = [(0, start, start_mask)]
+    best_full = INF
+    while heap:
+        cost, cell, mask = heapq.heappop(heap)
+        if cost > best.get((cell, mask), INF):
+            continue
+        if cost >= best_full:
+            break
+        for direction in DIRECTIONS:
+            step = slide_step(cell, direction, walkable, ice)
+            if step is None:
                 continue
+            other, step_cost = step
             new_mask = mask | (1 << index_of[other]) if other in index_of else mask
+            new_cost = cost + step_cost
             if new_mask == full:
-                return steps + 1
+                best_full = min(best_full, new_cost)
+                continue
             key = (other, new_mask)
-            if key not in seen:
-                seen.add(key)
-                todo.append((other, new_mask, steps + 1))
-    return None
+            if new_cost < best.get(key, INF):
+                best[key] = new_cost
+                heapq.heappush(heap, (new_cost, other, new_mask))
+    return None if best_full == INF else best_full
 
 
 def par_from(minimum):
@@ -616,6 +692,7 @@ def render_board(level, adv):
     chests = {as_cell(chest["cell"]): chest.get("puzzle") for chest in (adv["chests"] if adv else [])}
     items = {as_cell(cell): kind for kind, cell in (adv["items"] if adv else [])}
     obstacles = {as_cell(cell) for cell in (adv["obstacles"] if adv else [])}
+    ice_cells = {as_cell(cell) for cell in (adv.get("ice") or [])} if adv else set()
     patrol_ends = set()
     patrol_paths = set()
     for patrol in (adv.get("patrols") or [] if adv else []):
@@ -664,6 +741,8 @@ def render_board(level, adv):
             cell = (row, col)
             region_line.append(str(regions[row][col]))
             symbol = "."
+            if cell in ice_cells:
+                symbol = "~"
             if cell in solution_cells:
                 symbol = "*"
             if cell in items:
@@ -699,7 +778,7 @@ def describe(level, adv, minimum, computed_par):
                     "无法到达" if minimum is None else minimum,
                     "?" if computed_par is None else computed_par,
                     (level.get("adventure") or {}).get("par", "?")))
-    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线  B 木箱  P 压力板")
+    lines.append("    色区布局      符号：* 正解  S 起点  C 宝箱  h/a/c 道具  # 障碍  r 符文  T 石碑  p 巡逻端点  o 巡逻路线  B 木箱  P 压力板  ~ 冰面")
     for line in render_board(level, adv):
         lines.append(line)
     if adv:
@@ -716,6 +795,9 @@ def describe(level, adv, minimum, computed_par):
         plates = "、".join("(%d,%d)" % cell for cell in adv.get("plates") or [])
         if boxes or plates:
             lines.append("    推箱：木箱 %s   压力板 %s" % (boxes or "无", plates or "无"))
+        ice = "、".join("(%d,%d)" % tuple(cell) for cell in adv.get("ice") or [])
+        if ice:
+            lines.append("    冰面：%s" % ice)
     return lines
 
 
@@ -752,7 +834,8 @@ def validate(data, verbose=True):
         computed_par = None
         if adv and adv["start"] is not None:
             walkable = walkable_cells(adv["obstacles"])
-            reached = reachable(adv["start"], walkable)
+            ice = set(adv.get("ice") or [])
+            reached = reachable(adv["start"], walkable, ice)
             boxes = adv.get("boxes") or []
             if boxes:
                 # 有木箱时不能按「静态障碍」算可达性：木箱是可移动的，
@@ -787,7 +870,7 @@ def validate(data, verbose=True):
                     level_errors.append("adventure.chests[%d] 的符文顺序走不通："
                                         "必须先踩后面才该踩的符文才能到达" % index)
             if not missing:
-                minimum = min_steps(adv["start"], targets, walkable)
+                minimum = min_steps(adv["start"], targets, walkable, ice)
                 if minimum is not None:
                     computed_par = par_from(minimum)
                     if isinstance(adv["par"], int) and adv["par"] != computed_par:

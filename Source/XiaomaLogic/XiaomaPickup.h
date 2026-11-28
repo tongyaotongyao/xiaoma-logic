@@ -34,6 +34,8 @@ public:
 private:
     FXiaomaItemDef Def;
     bool bCollected = false;
+    /** 正在发拾取通知：通知期间状态还是“没捡”，防止重入重复发奖励 */
+    bool bCollecting = false;
     float ElapsedTime = 0.f;
     FXiaomaPickupCollectedDelegate OnCollected;
 

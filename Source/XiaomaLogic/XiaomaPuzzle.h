@@ -88,6 +88,12 @@ struct FXiaomaAdventureData
     TArray<FXiaomaPatrolDef> Patrols;
     /** 推箱木箱：占据整格，主角撞上去会推着走 */
     TArray<FXiaomaBoxDef> Boxes;
+    /**
+     * 冰面：可以正常走进去，但踩上去就再也站不住——会沿进入方向一直滑，
+     * 直到滑出冰面（落在后面第一块普通地板）或撞上墙/障碍（停在最后一块冰上）。
+     * 冰面上不放道具、宝箱、木箱，校验工具会检查。
+     */
+    TArray<FIntPoint> Ice;
 };
 
 struct FXiaomaLevel

@@ -95,6 +95,8 @@ private:
     FXiaomaChestDef Def;
     bool bUnlocked = false;
     bool bClaimed = false;
+    /** 正在发开箱通知：通知期间状态还是“没开”，防止重入重复发奖励 */
+    bool bClaiming = false;
     bool bSteleRead = false;
     bool bDug = false;
     int32 RuneProgress = 0;

@@ -380,6 +380,28 @@ bool FXiaomaPuzzle::LoadLevels(TArray<FXiaomaLevel>& OutLevels, FString& OutErro
                     }
                 }
             }
+            // 冰面：只影响主角能不能停下，不占格也不参与机关状态，所以不进 Mechanisms
+            const TArray<TSharedPtr<FJsonValue>>* IceArr = nullptr;
+            if (Adv->TryGetArrayField(TEXT("ice"), IceArr) && IceArr)
+            {
+                for (const TSharedPtr<FJsonValue>& IceVal : *IceArr)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* IceCellArr = nullptr;
+                    FIntPoint IceCell;
+                    if (IceVal->TryGetArray(IceCellArr) && IceCellArr
+                        && ParseIntPoint(*IceCellArr, IceCell))
+                    {
+                        if (!Level.Adventure.Ice.Contains(IceCell))
+                        {
+                            Level.Adventure.Ice.Add(IceCell);
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Level %d: ice cell out of range, ignored"), Level.Id);
+                    }
+                }
+            }
         }
         OutLevels.Add(MoveTemp(Level));
     }
@@ -593,6 +615,14 @@ int32 FXiaomaPuzzle::AdventureFingerprint(const FXiaomaLevel& Level)
     {
         Mix(Box.Cell.X);
         Mix(Box.Cell.Y);
+    }
+
+    // 冰面本身没有状态，但它决定了主角能停在哪：地形一改，续局里那个位置可能已经站不住了
+    Mix(Level.Adventure.Ice.Num());
+    for (const FIntPoint& IceCell : Level.Adventure.Ice)
+    {
+        Mix(IceCell.X);
+        Mix(IceCell.Y);
     }
 
     return static_cast<int32>(Hash & 0x7fffffffu);

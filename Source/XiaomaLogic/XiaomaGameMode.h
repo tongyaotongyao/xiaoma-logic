@@ -8,6 +8,7 @@
 class AXiaomaBoardActor;
 class ACameraActor;
 class AXiaomaHerdsman;
+class AXiaomaIceField;
 class AXiaomaMechanism;
 class AXiaomaPickup;
 class UXiaomaHUDWidget;
@@ -133,6 +134,9 @@ public:
     /** 这一格当前是否被机关封住（障碍、未打开的围栏等） */
     bool IsCellBlocked(FIntPoint Cell) const;
 
+    /** 这一格是不是冰面：踩上去主角会一直滑到滑出冰面或撞墙 */
+    bool IsIceCell(FIntPoint Cell) const;
+
 private:
     void SetScreen(EXiaomaScreen NewScreen);
     void RefreshBoardAndUI();
@@ -148,6 +152,8 @@ private:
     void ClearAdventureActors();
     void PushUndoSnapshot();
     void OnHerdsmanCellChanged(FIntPoint NewCell);
+    /** 刚踩上冰面：滑行这一段玩家中途控不了，先存一个撤销点 */
+    void OnHerdsmanSlideBegin();
     void OnWheelSelectColour(int32 ColourIndex);
     void OnWheelRecall();
     void OnChestOpened(EXiaomaItemType Reward, FIntPoint Cell, FString& OutMessage);
@@ -205,6 +211,10 @@ private:
 
     UPROPERTY()
     TArray<TObjectPtr<AXiaomaPickup>> Pickups;
+
+    /** 冰面装饰：没有状态，所以不进 Mechanisms，单独持有以便换关时清掉 */
+    UPROPERTY()
+    TObjectPtr<AXiaomaIceField> IceField;
 
     UPROPERTY()
     TObjectPtr<UXiaomaHUDWidget> GameWidget;

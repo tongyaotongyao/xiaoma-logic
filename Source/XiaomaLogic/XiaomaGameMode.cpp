@@ -3,6 +3,7 @@
 #include "XiaomaBoardActor.h"
 #include "XiaomaHerdsman.h"
 #include "XiaomaHUDWidget.h"
+#include "XiaomaIceField.h"
 #include "XiaomaMechanism.h"
 #include "XiaomaPatroller.h"
 #include "XiaomaPickup.h"
@@ -87,6 +88,8 @@ void AXiaomaGameMode::BeginPlay()
     {
         Herdsman->SetOnCellChanged(FXiaomaHerdsmanCellDelegate::CreateUObject(
             this, &AXiaomaGameMode::OnHerdsmanCellChanged));
+        Herdsman->SetOnSlideBegin(FXiaomaHerdsmanSlideDelegate::CreateUObject(
+            this, &AXiaomaGameMode::OnHerdsmanSlideBegin));
         Herdsman->SetActorHiddenInGame(true);
         Herdsman->SetMovementEnabled(false);
     }
@@ -141,6 +144,12 @@ bool AXiaomaGameMode::IsCellBlocked(FIntPoint Cell) const
         }
     }
     return false;
+}
+
+bool AXiaomaGameMode::IsIceCell(FIntPoint Cell) const
+{
+    const FXiaomaLevel* Level = GetCurrentLevel();
+    return Level && Level->Adventure.Ice.Contains(Cell);
 }
 
 int32 AXiaomaGameMode::GetUnlockedLevel() const { return Progress ? Progress->UnlockedLevel : 1; }
@@ -589,6 +598,12 @@ void AXiaomaGameMode::ClearAdventureActors()
         if (Pickup) Pickup->Destroy();
     }
     Pickups.Reset();
+
+    if (IceField)
+    {
+        IceField->Destroy();
+        IceField = nullptr;
+    }
 }
 
 void AXiaomaGameMode::SpawnAdventureActors()
@@ -598,6 +613,15 @@ void AXiaomaGameMode::SpawnAdventureActors()
     if (!Level || !Board)
     {
         return;
+    }
+    // 冰面只是地形装饰，先铺好再放机关，读档/撤销都不用管它
+    if (Level->Adventure.Ice.Num() > 0)
+    {
+        IceField = GetWorld()->SpawnActor<AXiaomaIceField>(AXiaomaIceField::StaticClass());
+        if (IceField)
+        {
+            IceField->SetupIce(Level->Adventure.Ice, Board);
+        }
     }
     for (const FIntPoint& ObstacleCell : Level->Adventure.Obstacles)
     {
@@ -710,6 +734,8 @@ void AXiaomaGameMode::StartLevel(int32 LevelNumber)
         Herdsman->SetCellBlockedPredicate([this](FIntPoint Cell) { return IsCellBlocked(Cell); });
         Herdsman->SetCellPushHandler(FXiaomaHerdsmanPushDelegate::CreateUObject(
             this, &AXiaomaGameMode::TryPushBoxAtCell));
+        // 冰面：踩上去就滑，判定表只看当前关的 ice 列表
+        Herdsman->SetIcePredicate([this](FIntPoint Cell) { return IsIceCell(Cell); });
         Herdsman->TeleportToCell(SpawnCell);
         if (Board)
         {
@@ -756,6 +782,22 @@ void AXiaomaGameMode::PushUndoSnapshot()
         Snap.MechanismStates.Add(MoveTemp(State));
     }
     UndoHistory.Add(MoveTemp(Snap));
+    // 冰面上每滑一次都要压一条，长时间游玩会把历史堆得很长，给个上限
+    constexpr int32 MaxUndoHistory = 200;
+    if (UndoHistory.Num() > MaxUndoHistory)
+    {
+        UndoHistory.RemoveAt(0, UndoHistory.Num() - MaxUndoHistory);
+    }
+}
+
+void AXiaomaGameMode::OnHerdsmanSlideBegin()
+{
+    if (Screen != EXiaomaScreen::Playing)
+    {
+        return;
+    }
+    // 此时主角刚站上第一块冰格、还没开始位移，快照停在这里正好是“重选方向”的位置
+    PushUndoSnapshot();
 }
 
 void AXiaomaGameMode::OnHerdsmanCellChanged(FIntPoint NewCell)
@@ -1148,6 +1190,8 @@ void AXiaomaGameMode::OnPatrollerHitHerdsman(AXiaomaPatroller* Patroller)
     }
     // 先弹回起点再扣命：LoseLife 会立即落盘，存档里记的应该是弹回之后的位置
     Herdsman->TeleportToCell(Level->Adventure.StartCell);
+    // 被弹回起点本身就是惩罚，之前那几步不该还能按 Z 撤回来（四叶草抵挡时也一样）
+    UndoHistory.Reset();
     LoseLife(TEXT("被捣蛋鬼撞到了，弹回起点并失去一条生命"));
 }
 
@@ -1278,6 +1322,8 @@ void AXiaomaGameMode::LoseLife(const FString& Reason)
     }
     ++WrongAttempts;
     PlayFeedback(TEXT("Error"));
+    // 这一命是真的扣掉了：撤销历史一起清空，否则撞一次鬼按个 Z 就能把命和位置都讨回来
+    UndoHistory.Reset();
     CurrentLives = FMath::Max(0, CurrentLives - 1);
     Progress->Lives = CurrentLives;
     if (CurrentLives == 0)

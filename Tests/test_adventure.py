@@ -33,14 +33,16 @@ class AdventureDataTests(unittest.TestCase):
     def test_par_uses_walk_budget(self):
         for level in DATA["levels"]:
             walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
-            minimum = va.min_steps(adventure(level)["start"], solution_cells(level), walkable)
+            ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
+            minimum = va.min_steps(adventure(level)["start"], solution_cells(level), walkable, ice)
             self.assertIsNotNone(minimum, level["id"])
             self.assertEqual(adventure(level)["par"], va.par_from(minimum), level["id"])
 
     def test_every_solution_cell_and_reward_is_reachable(self):
         for level in DATA["levels"]:
             walkable = va.walkable_cells(adventure(level).get("obstacles") or [])
-            reached = va.reachable(adventure(level)["start"], walkable)
+            ice = {va.as_cell(cell) for cell in adventure(level).get("ice") or []}
+            reached = va.reachable(adventure(level)["start"], walkable, ice)
             for cell in solution_cells(level):
                 self.assertIn(cell, reached, (level["id"], cell))
             for chest in adventure(level).get("chests") or []:
@@ -219,6 +221,47 @@ class ValidatorGuardTests(unittest.TestCase):
         _, errors, _ = va.validate(broken)
         self.assertTrue(any("不再使用 box 字段" in message for message in errors), errors)
 
+    def test_box_on_ice_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][15]
+        ice = level["adventure"]["ice"][0]
+        level["adventure"]["boxes"] = [{"cell": list(ice)}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("冰面上，冰上推不动箱子" in message for message in errors), errors)
+
+    def test_item_on_ice_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][15]
+        ice = level["adventure"]["ice"][0]
+        level["adventure"]["items"] = [{"type": "apple", "cell": list(ice)}]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("落在冰面" in message for message in errors), errors)
+
+    def test_chest_on_ice_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][15]
+        ice = level["adventure"]["ice"][0]
+        level["adventure"]["chests"][0]["cell"] = list(ice)
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("宝箱落在冰面" in message for message in errors), errors)
+
+    def test_ice_on_obstacle_is_an_error(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][5]
+        obstacle = level["adventure"]["obstacles"][0]
+        level["adventure"]["ice"] = [list(obstacle)]
+        _, errors, _ = va.validate(broken)
+        self.assertTrue(any("冰面与障碍同格" in message for message in errors), errors)
+
+    def test_lone_ice_cell_is_reported_as_a_hint(self):
+        broken = copy.deepcopy(DATA)
+        level = broken["levels"][15]
+        # 把冰面换成一格孤冰：滑进去马上就滑出来，等于没配
+        level["adventure"]["ice"] = [[3, 3]]
+        _, errors, warnings = va.validate(broken)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("单格冰" in message for message in warnings), warnings)
+
 
 class BoxPushTests(unittest.TestCase):
     """推箱状态搜索：木箱整格推，推不进障碍、别的箱子和棋盘外。"""
@@ -240,6 +283,39 @@ class BoxPushTests(unittest.TestCase):
         states = va.box_push_states((5, 0), [(2, 0)], walkable, set())
         cells = {cell for state in states for cell in state[1]}
         self.assertNotIn((0, 0), cells, "障碍后面的格子木箱过不去")
+
+
+class IceSlideTests(unittest.TestCase):
+    """冰面滑行语义：踩上去就停不住，滑出冰面才落脚，撞墙就停在最后一块冰上。"""
+
+    ALL_CELLS = {(row, col) for row in range(va.SIZE) for col in range(va.SIZE)}
+
+    def test_plain_floor_costs_one_step(self):
+        self.assertEqual(va.slide_step((0, 0), (0, 1), self.ALL_CELLS), ((0, 1), 1))
+
+    def test_slide_leaves_ice_on_the_next_floor(self):
+        ice = {(0, 1), (0, 2), (0, 3)}
+        self.assertEqual(va.slide_step((0, 0), (0, 1), self.ALL_CELLS, ice), ((0, 4), 4))
+
+    def test_slide_stops_on_last_ice_cell_at_the_wall(self):
+        ice = {(0, 4), (0, 5)}
+        self.assertEqual(va.slide_step((0, 3), (0, 1), self.ALL_CELLS, ice), ((0, 5), 2))
+
+    def test_slide_stops_before_an_obstacle(self):
+        ice = {(2, 1), (2, 2)}
+        walkable = self.ALL_CELLS - {(2, 3)}
+        self.assertEqual(va.slide_step((2, 0), (0, 1), walkable, ice), ((2, 2), 2))
+
+    def test_blocked_step_returns_none(self):
+        walkable = self.ALL_CELLS - {(0, 1)}
+        self.assertIsNone(va.slide_step((0, 0), (0, 1), walkable))
+
+    def test_ice_does_not_give_free_steps(self):
+        """滑过去也要按跨过的格数记账，否则冰面会变成白赚步数的捷径。"""
+        walkable = {(0, col) for col in range(va.SIZE)}
+        ice = {(0, 1), (0, 2), (0, 3)}
+        self.assertEqual(va.min_steps((0, 0), [(0, 5)], walkable), 5)
+        self.assertEqual(va.min_steps((0, 0), [(0, 5)], walkable, ice), 5)
 
 
 class PuzzlePacingTests(unittest.TestCase):
@@ -297,6 +373,21 @@ class PuzzlePacingTests(unittest.TestCase):
                 path = [va.as_cell(cell) for cell in patrol["path"]]
                 for end in (path[0], path[-1]):
                     self.assertNotIn(end, cells, (level["id"], index))
+
+    def test_ice_starts_at_level_sixteen(self):
+        for level in DATA["levels"][:15]:
+            self.assertFalse(adventure(level).get("ice"), level["id"])
+        for level in DATA["levels"][15:17]:
+            self.assertTrue(adventure(level).get("ice"), level["id"])
+
+    def test_level_seventeen_needs_the_ice(self):
+        """第 17 关有一块正解格只能靠滑到墙边才停得住，冰面不是装饰。"""
+        level = DATA["levels"][16]
+        adv = adventure(level)
+        ice = {va.as_cell(cell) for cell in adv["ice"]}
+        frozen = va.walkable_cells(adv.get("obstacles") or []) - ice
+        reached = va.reachable(adv["start"], frozen)
+        self.assertTrue(set(solution_cells(level)) - reached, "把冰面当墙就通不了关")
 
 
 if __name__ == "__main__":

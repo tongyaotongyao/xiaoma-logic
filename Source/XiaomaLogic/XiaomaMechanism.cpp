@@ -499,14 +499,18 @@ void AXiaomaChest::SetPlatePressed(bool bPressed)
 
 void AXiaomaChest::TryClaim()
 {
-    if (!bUnlocked || bClaimed)
+    if (!bUnlocked || bClaimed || bClaiming)
     {
         return;
     }
-    bClaimed = true;
-    RefreshVisuals();
+    // 先通知、后置位：GameMode 在回调里拍撤销快照，快照必须记成“还没开”。
+    // 反过来做的话，撤销会把奖励退回去、宝箱却是空的，奖励就白丢了。
+    bClaiming = true;
     FString DummyMsg;
     OnChestOpened.ExecuteIfBound(Def.Reward, Def.Cell, DummyMsg);
+    bClaiming = false;
+    bClaimed = true;
+    RefreshVisuals();
 }
 
 void AXiaomaChest::RefreshVisuals()
